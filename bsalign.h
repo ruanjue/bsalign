@@ -12,18 +12,18 @@
  * 
  * I compute the score matrix in the way of one row by one row, that is y always increases 1 in next call.
  * x is resorted into striped vector based on W and B.
+ * B: number of values in a SIMD word, W = bandwidth / B.
  * When B = 4 and W = 2, there have
  * normal array     [0, 1, 2, 3, 4, 5, 6, 7]
  * striped blocks   [0, 2, 4, 6; 1, 3, 5, 7]
  * running blocks [0, 1; 2, 3; 4, 5; 6, 7]
- * B: number of values in a SIMD word, W = bandwidth / B. In implementation, I use __m128i to store 16 int8_t, B = 16.
- *
+ * In implementation, I use __m128i to store 16 int8_t, B = 16.
  * H, E, F, Q, G are the absolute scores
  * e, f, u, q, g are the relative scores
  * S is score for bases matching
  *
  * Important formulas:
- * H(x, y) = max(H(x - 1, y - 1) + S(x, y), E(x, y), F(x, y))
+ * H(x, y) = max(H(x - 1, y - 1) + S(x, y), E(x, y), Q(x, y), F(x, y), G(x, y))
  * u(x, y) = H(x, y) - H(x - 1, y)
  * h(x, y) = H(x, y) - H(x - 1, y - 1)
  * # vertical cross two rows
@@ -48,12 +48,12 @@
  *  h(x, y) = max(S(x, y), e(x, y), q(x, y), f(x, y), g(x, y))
  *  f(x + 1, y) = max(f(x, y) + gap_e, h(x, y) + gap_o + gap_e) + u(x, y - 1) // please note u(x, y - 1) = H(x, y - 1) - H(x - 1, y - 1)
  *  g(x + 1, y) = max(g(x, y) + gap_e2, h(x, y) + gap_o2 + gap_e2) + u(x, y - 1)
- *	sum_u[] = sum(u([], y - 1)) // summing u of each running block
+ *  sum_u[] = sum(u([], y - 1)) // summing u of each running block in previous row
  *
  * 3, active F-loop
  *  F was calculated within each running block, need to check whether F can update Hs/Fs in next one or more running blocks, call this F-penetration
  *  Imagining a bigger F that continous updates all following Hs/Fs to the very ending, traditional lazy F-loop algorithm will perform badly
- *  When doing global alignment, such like cases often happen. Active F-loop first updates all Fs at the very begging of each running block,
+ *  When doing global alignment, such like cases often happen. Active F-loop first updates all Fs at the very beggining of each running block,
  *  then there must be at most W loops instead of 16 * W.
  *  f[0] = MIN_INF // f[0] = {f(0, y), f(W, y), f(2 * W, y), ..., f((B - 1) * W, y)} in striped coordinate, f(0 ... B - 1, y) in normal coordinate
  *  f[i] = max(f[i], f[i - 1] + sum_u[i] + 16 * gap_e)
@@ -67,14 +67,14 @@
  *
  * 5, find max score within a row
  *  H(x, y) = H(x - 1, y) + u(x, y)
- *  By spliting it into pieces of 256 epi8, I can use epi16 instead of epi32 to speed up the computing
- *  Also, scores of the normal first and last W cells can be stored during the above scoring
+ *  By spliting it into pieces of 256 epi8, I can use epi16 instead of epi32 to speed up the sum and max
+ *  Also, scores of the first and last running blocks can be stored during this procedure
  *
  * 6, adaptive band
  * if sum(H[0 .. W - 1]) > sum(H[15 * W .. 16 * W - 1])  row_offset = row_offset + 0 // in normal coordinate
  * if sum(H[0 .. W - 1]) == sum(H[15 * W .. 16 * W - 1]) row_offset = row_offset + 1
  * if sum(H[0 .. W - 1]) < sum(H[15 * W .. 16 * W - 1])  row_offset = row_offset + 2
- * keep the bandwidth, but shift the offset of band in a row, see 1) shifting
+ * keep the bandwidth, but shift the offset of band in this row for next call, see 1) shifting
  *
  */
 
