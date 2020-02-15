@@ -3,12 +3,12 @@
 
 /**
  * References:
- * Farrar, Michael. 2007. ※Striped Smith-Waterman Speeds Database Searches Six Times over Other SIMD Implementations.§ Bioinformatics 23 (2): 156每61. https://doi.org/10.1093/bioinformatics/btl5
- * Suzuki, Hajime, and Masahiro Kasahara. 2017. ※Acceleration of Nucleotide Semi-Global Alignment with Adaptive Banded Dynamic Programming.§ BioRxiv, September, 130633. https://doi.org/10.1101/13063
- * Suzuki, Hajime, and Masahiro Kasahara. 2018. ※Introducing Difference Recurrence Relations for Faster Semi-Global Alignment of Long Sequences.§ BMC Bioinformatics 19 (Suppl 1). https://doi.org/10.1186/s12859-018-2018.
- * Li, Heng. 2018. ※Minimap2: Pairwise Alignment for Nucleotide Sequences.§ Bioinformatics 34 (18): 3094每3100. https://doi.org/10.1093/bioinformatics/b
+ * Farrar, Michael. 2007. "Striped Smith-Waterman Speeds Database Searches Six Times over Other SIMD Implementations." Bioinformatics 23 (2): 156每61. https://doi.org/10.1093/bioinformatics/btl5
+ * Suzuki, Hajime, and Masahiro Kasahara. 2017. "Acceleration of Nucleotide Semi-Global Alignment with Adaptive Banded Dynamic Programming" BioRxiv, September, 130633. https://doi.org/10.1101/13063
+ * Suzuki, Hajime, and Masahiro Kasahara. 2018. "Introducing Difference Recurrence Relations for Faster Semi-Global Alignment of Long Sequences." BMC Bioinformatics 19 (Suppl 1). https://doi.org/10.1186/s12859-018-2018.
+ * Li, Heng. 2018. "Minimap2: Pairwise Alignment for Nucleotide Sequences." Bioinformatics 34 (18): 3094每3100. https://doi.org/10.1093/bioinformatics/b
  *
- * My Algorithm = global overlap alignment + striped vectorization + difference recurrence relation + adaptive banded + active F-loop
+ * My Algorithm = global/overlap alignment + striped vectorization + difference recurrence relation + adaptive banded + active F-loop
  * 
  * I compute the score matrix in the way of one row by one row, that is y always increases 1 in next call.
  * x is resorted into striped vector based on W and B.
@@ -17,7 +17,7 @@
  * normal array     [0, 1, 2, 3, 4, 5, 6, 7]
  * striped blocks   [0, 2, 4, 6; 1, 3, 5, 7]
  * running blocks [0, 1; 2, 3; 4, 5; 6, 7]
- * In implementation, I use __m128i to store 16 int8_t, B = 16.
+ * In implementation, I use xint to store 16 int8_t, B = 16.
  * H, E, F, Q, G are the absolute scores
  * e, f, u, q, g are the relative scores
  * S is score for bases matching
@@ -82,9 +82,13 @@
 #include "chararray.h"
 #include "dna.h"
 #include "list.h"
+#ifdef __AVX2__
+#include <immintrin.h>
+#else
 #include <emmintrin.h>
 #include <smmintrin.h>
 #include <tmmintrin.h>
+#endif
 
 #define SEQALIGN_BT_M	0
 #define SEQALIGN_BT_D1	1
@@ -96,11 +100,79 @@
 #define SEQALIGN_BT_IE1	32
 #define SEQALIGN_BT_IE2	64
 
-// Please DO NOT set M/X/O/E to be bigger than 63
+// Please DO NOT set abs(mat/mis/gap_o/gap_e) to be bigger than 63
 #define SEQALIGN_SCORE_EPI8_MIN	(-(MAX_B1 >> 1))
 #define SEQALIGN_SCORE_EPI8_MAX	(MAX_B1 >> 1)
 #define SEQALIGN_SCORE_MIN	(-(MAX_B4 >> 1))
 #define SEQALIGN_SCORE_MAX	(MAX_B4 >> 1)
+
+#ifdef __AVX2__
+
+//#pragma message("Choose AVX2 in " __FILE__ ". Just a message, ignore it")
+#define WORDSIZE	32
+#define WORDSHIFT	5
+typedef __m256i	xint;
+#define mm_load	_mm256_load_si256
+#define mm_store	_mm256_store_si256
+#define mm_or	_mm256_or_si256
+#define mm_and	_mm256_and_si256
+#define mm_set1_epi8	_mm256_set1_epi8
+#define mm_set1_epi16	_mm256_set1_epi16
+#define mm_set1_epi32	_mm256_set1_epi32
+#define mm_srli	_mm256_srli_si256
+#define mm_slli	_mm256_slli_si256
+#define mm_insert_epi8	_mm256_insert_epi8
+#define mm_extract_epi16	_mm256_extract_epi16
+#define mm_extract_epi32	_mm256_extract_epi32
+#define mm_adds_epi8	_mm256_adds_epi8
+#define mm_adds_epi16	_mm256_adds_epi16
+#define mm_add_epi32	_mm256_add_epi32
+#define mm_subs_epi8	_mm256_subs_epi8
+#define mm_subs_epi16	_mm256_subs_epi16
+#define mm_cmpgt_epi8	_mm256_cmpgt_epi8
+#define mm_cmpgt_epi32	_mm256_cmpgt_epi32
+#define mm_max_epi8	_mm256_max_epi8
+#define mm_max_epi16	_mm256_max_epi16
+#define mm_blendv_epi8	_mm256_blendv_epi8
+#define mm_cvtepi8lo_epi16(a)	_mm256_cvtepi8_epi16(_mm256_castsi256_si128(a))
+#define mm_cvtepi8hi_epi16(a)	_mm256_cvtepi8_epi16(_mm256_castsi256_si128(_mm256_srli_si256(a, 16)))
+#define mm_cvtepi16lo_epi32(a)	_mm256_cvtepi16_epi32(_mm256_castsi256_si128(a))
+#define mm_cvtepi16hi_epi32(a)	_mm256_cvtepi16_epi32(_mm256_castsi256_si128(_mm256_srli_si256(a, 16)))
+
+#else
+
+//#pragma message("Choose SSE4.2 in " __FILE__ ". Just a message, ignore it")
+#define WORDSIZE	16
+#define WORDSHIFT	4
+typedef __m128i	xint;
+#define mm_load	_mm_load_si128
+#define mm_store	_mm_store_si128
+#define mm_or	_mm_or_si128
+#define mm_and	_mm_and_si128
+#define mm_set1_epi8	_mm_set1_epi8
+#define mm_set1_epi16	_mm_set1_epi16
+#define mm_set1_epi32	_mm_set1_epi32
+#define mm_srli	_mm_srli_si128
+#define mm_slli	_mm_slli_si128
+#define mm_insert_epi8	_mm_insert_epi8
+#define mm_extract_epi16	_mm_extract_epi16
+#define mm_extract_epi32	_mm_extract_epi32
+#define mm_adds_epi8	_mm_adds_epi8
+#define mm_adds_epi16	_mm_adds_epi16
+#define mm_add_epi32	_mm_add_epi32
+#define mm_subs_epi8	_mm_subs_epi8
+#define mm_subs_epi16	_mm_subs_epi16
+#define mm_cmpgt_epi8	_mm_cmpgt_epi8
+#define mm_cmpgt_epi32	_mm_cmpgt_epi32
+#define mm_max_epi8	_mm_max_epi8
+#define mm_max_epi16	_mm_max_epi16
+#define mm_blendv_epi8	_mm_blendv_epi8
+#define mm_cvtepi8lo_epi16(a)	_mm_cvtepi8_epi16(a)
+#define mm_cvtepi8hi_epi16(a)	_mm_cvtepi8_epi16(_mm_srli_si128(a, 8))
+#define mm_cvtepi16lo_epi32(a)	_mm_cvtepi16_epi32(a)
+#define mm_cvtepi16hi_epi32(a)	_mm_cvtepi16_epi32(_mm_srli_si128(a, 8))
+
+#endif
 
 typedef struct {
 	int score;
@@ -113,7 +185,7 @@ typedef struct {
  * Basic function referings for global DNA sequence alignment, please their implementations within this file
  */
 
-#define banded_striped_epi8_pos2idx(bandwidth, pos) ((((pos) % (bandwidth >> 4)) << 4) + ((pos) / ((bandwidth) >> 4)))
+#define banded_striped_epi8_pos2idx(bandwidth, pos) ((((pos) % (bandwidth >> WORDSHIFT)) << WORDSHIFT) + ((pos) / ((bandwidth) >> WORDSHIFT)))
 
 static inline void banded_striped_epi8_seqalign_set_score_matrix(b1i matrix[16], b1i mat, b1i mis){ u4i i; for(i=0;i<16;i++) matrix[i] = ((i ^ (i >> 2)) & 0x3)? mis : mat; }
 
@@ -129,14 +201,14 @@ typedef void (*banded_striped_epi8_seqalign_piecex_row_mov_func)(b1i **us[2], b1
 // core func to update row scores, from [0] to [1]
 // ph is the score of H(-1, y - 1)
 // rh is the revised score of H(-1, y - 1)
-// @return: score of H(-1, y), note that H(-1, y) is useful to restore all scores of row
+// @return: score of H(-1, y), note that H(-1, y) is useful to restore all scores of row in row_max
 typedef int (*banded_striped_epi8_seqalign_piecex_row_cal_func)(u4i rbeg, u1i base, b1i **us[2], b1i **es[2], b1i **qs[2], b1i *bs, b1v *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, int ph, int rh);
 
 typedef void (*banded_striped_epi8_seqalign_piecex_row_verify_func)(int rbeg, int W, int ph, int rh, int hh, u1i base, b1i **us[2], b1i **es[2], b1i **qs[2], b1v *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2);
 
-// find max score and return the real offset in row
-// wscores[0] store the first W real scores in normal cell order
-// wscores[1] store the last  W real scores in normal cell order
+// find max score and return the real offset in band
+// wscores[0] store the first running block
+// wscores[1] store the last  running block
 typedef u4i (*banded_striped_epi8_seqalign_piecex_row_max_func)(b1i **us, u4i W, int hh, int *wscores[2], int *max_score);
 
 // backtrace
@@ -146,71 +218,12 @@ typedef u4i (*banded_striped_epi8_seqalign_piecex_row_max_func)(b1i **us, u4i W,
 typedef void (*banded_striped_epi8_seqalign_piecex_backtrace_func)(BaseBank *seqs, u8i qoff, u4i qlen, u8i toff, u4i tlen, b1v *btds, u4v *begs, u4i bandwidth, int piecewise, seqalign_result_t *rs, String **alnstr);
 
 // implementation of overlap alignment for two sequences
-// bandwidth should be times of 16
+// bandwidth should be times of WORDSIZE
 static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(BaseBank *seqs, u8i qoff, u4i qlen, u8i toff, u4i tlen, b1v *qprof, b1v *rows, b1v *btds, u4v *begs, u4i bandwidth, b1i matrix[16], b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, String **alnstr, int verbose);
 
 
-#define my_print_epi32X4(title, v)	\
-{	\
-	int vals[16], iter;	\
-	_mm_store_si128(((__m128i*)vals) + 0, (v)[0]);	\
-	_mm_store_si128(((__m128i*)vals) + 1, (v)[1]);	\
-	_mm_store_si128(((__m128i*)vals) + 2, (v)[2]);	\
-	_mm_store_si128(((__m128i*)vals) + 3, (v)[3]);	\
-	fprintf(stdout, TOSTR(title));	\
-	for(iter=0;iter<16;iter++){	\
-		fprintf(stdout, "\t%d", vals[iter]);	\
-	}	\
-	fprintf(stdout, "\n");	\
-}
-
-#define my_print_epi32(title, v)	\
-{	\
-	int vals[4], iter;	\
-	_mm_store_si128(((__m128i*)vals), v);	\
-	fprintf(stdout, TOSTR(title));	\
-	for(iter=0;iter<4;iter++){	\
-		fprintf(stdout, "\t%d", vals[iter]);	\
-	}	\
-	fprintf(stdout, "\n");	\
-}
-
-#define my_print_epi16X2(title, v)	\
-{	\
-	b2i vals[16], iter;	\
-	_mm_store_si128(((__m128i*)vals) + 0, (v)[0]);	\
-	_mm_store_si128(((__m128i*)vals) + 1, (v)[1]);	\
-	fprintf(stdout, TOSTR(title));	\
-	for(iter=0;iter<16;iter++){	\
-		fprintf(stdout, "\t%d", vals[iter]);	\
-	}	\
-	fprintf(stdout, "\n");	\
-}
-
-#define my_print_epi16(title, v)	\
-{	\
-	b2i vals[8], iter;	\
-	_mm_store_si128(((__m128i*)vals), v);	\
-	fprintf(stdout, TOSTR(title));	\
-	for(iter=0;iter<16;iter++){	\
-		fprintf(stdout, "\t%d", vals[iter]);	\
-	}	\
-	fprintf(stdout, "\n");	\
-}
-
-#define my_print_epi8(title, v)	\
-{	\
-	b1i vals[16], iter;	\
-	_mm_store_si128(((__m128i*)vals), v);	\
-	fprintf(stdout, TOSTR(title));	\
-	for(iter=0;iter<16;iter++){	\
-		fprintf(stdout, "\t%d", vals[iter]);	\
-	}	\
-	fprintf(stdout, "\n");	\
-}
-
 static inline void banded_striped_epi8_seqalign_piece0_row_mov(b1i **us[2], b1i **es[2], b1i **qs[2], u4i W, u4i mov){
-	__m128i u;
+	xint u;
 	u4i i, div;
 	UNUSED(es);
 	UNUSED(qs);
@@ -220,24 +233,24 @@ static inline void banded_striped_epi8_seqalign_piece0_row_mov(b1i **us[2], b1i 
 	}
 	div = W - mov;
 	for(i=0;i<div;i++){
-		u = _mm_load_si128((__m128i*)us[1][i + mov]);
-		_mm_store_si128((__m128i*)us[0][i], u);
+		u = mm_load((xint*)us[1][i + mov]);
+		mm_store((xint*)us[0][i], u);
 	}
 	if(!mov) return;
 	{
-		u = _mm_load_si128((__m128i*)us[1][i + mov - W]);
-		u = _mm_srli_si128(u, 1);
-		u = _mm_insert_epi8(u, SEQALIGN_SCORE_EPI8_MIN, 15);
+		u = mm_load((xint*)us[1][i + mov - W]);
+		u = mm_srli(u, 1);
+		u = mm_insert_epi8(u, SEQALIGN_SCORE_EPI8_MIN, WORDSIZE - 1);
 	}
 	for(;i<W;i++){
-		_mm_store_si128((__m128i*)us[0][i], u);
-		u = _mm_load_si128((__m128i*)us[1][(i + mov - W + 1) % W]);
-		u = _mm_srli_si128(u, 1);
+		mm_store((xint*)us[0][i], u);
+		u = mm_load((xint*)us[1][(i + mov - W + 1) % W]);
+		u = mm_srli(u, 1);
 	}
 }
 
 static inline void banded_striped_epi8_seqalign_piece1_row_mov(b1i **us[2], b1i **es[2], b1i **qs[2], u4i W, u4i mov){
-	__m128i u, e;
+	xint u, e;
 	u4i i, div;
 	UNUSED(qs);
 	if(mov > W){
@@ -246,29 +259,29 @@ static inline void banded_striped_epi8_seqalign_piece1_row_mov(b1i **us[2], b1i 
 	}
 	div = W - mov;
 	for(i=0;i<div;i++){
-		u = _mm_load_si128((__m128i*)us[1][i + mov]);
-		e = _mm_load_si128((__m128i*)es[1][i + mov]);
-		_mm_store_si128((__m128i*)us[0][i], u);
-		_mm_store_si128((__m128i*)es[0][i], e);
+		u = mm_load((xint*)us[1][i + mov]);
+		e = mm_load((xint*)es[1][i + mov]);
+		mm_store((xint*)us[0][i], u);
+		mm_store((xint*)es[0][i], e);
 	}
 	if(!mov) return;
 	{
-		u = _mm_load_si128((__m128i*)us[1][i + mov - W]);
-		u = _mm_srli_si128(u, 1);
-		u = _mm_insert_epi8(u, SEQALIGN_SCORE_EPI8_MIN, 15);
+		u = mm_load((xint*)us[1][i + mov - W]);
+		u = mm_srli(u, 1);
+		u = mm_insert_epi8(u, SEQALIGN_SCORE_EPI8_MIN, WORDSIZE - 1);
 	}
 	for(;i<W;i++){
-		e = _mm_load_si128((__m128i*)es[1][i + mov - W]);
-		e = _mm_srli_si128(e, 1);
-		_mm_store_si128((__m128i*)us[0][i], u);
-		_mm_store_si128((__m128i*)es[0][i], e);
-		u = _mm_load_si128((__m128i*)us[1][(i + mov - W + 1) % W]);
-		u = _mm_srli_si128(u, 1);
+		e = mm_load((xint*)es[1][i + mov - W]);
+		e = mm_srli(e, 1);
+		mm_store((xint*)us[0][i], u);
+		mm_store((xint*)es[0][i], e);
+		u = mm_load((xint*)us[1][(i + mov - W + 1) % W]);
+		u = mm_srli(u, 1);
 	}
 }
 
 static inline void banded_striped_epi8_seqalign_piece2_row_mov(b1i **us[2], b1i **es[2], b1i **qs[2], u4i W, u4i mov){
-	__m128i u, e, x;
+	xint u, e, x;
 	u4i i, div;
 	if(mov > W){
 		fprintf(stderr, " -- mov(%d) > W(%d) in %s -- %s:%d --\n", mov, W, __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
@@ -276,37 +289,37 @@ static inline void banded_striped_epi8_seqalign_piece2_row_mov(b1i **us[2], b1i 
 	}
 	div = W - mov;
 	for(i=0;i<div;i++){
-		u = _mm_load_si128((__m128i*)us[1][i + mov]);
-		e = _mm_load_si128((__m128i*)es[1][i + mov]);
-		x = _mm_load_si128((__m128i*)qs[1][i + mov]);
-		_mm_store_si128((__m128i*)us[0][i], u);
-		_mm_store_si128((__m128i*)es[0][i], e);
-		_mm_store_si128((__m128i*)qs[0][i], x);
+		u = mm_load((xint*)us[1][i + mov]);
+		e = mm_load((xint*)es[1][i + mov]);
+		x = mm_load((xint*)qs[1][i + mov]);
+		mm_store((xint*)us[0][i], u);
+		mm_store((xint*)es[0][i], e);
+		mm_store((xint*)qs[0][i], x);
 	}
 	if(!mov) return;
 	{
-		u = _mm_load_si128((__m128i*)us[1][i + mov - W]);
-		u = _mm_srli_si128(u, 1);
-		u = _mm_insert_epi8(u, SEQALIGN_SCORE_EPI8_MIN, 15);
+		u = mm_load((xint*)us[1][i + mov - W]);
+		u = mm_srli(u, 1);
+		u = mm_insert_epi8(u, SEQALIGN_SCORE_EPI8_MIN, WORDSIZE - 1);
 	}
 	for(;i<W;i++){
-		e = _mm_load_si128((__m128i*)es[1][i + mov - W]);
-		x = _mm_load_si128((__m128i*)qs[1][i + mov - W]);
-		e = _mm_srli_si128(e, 1);
-		x = _mm_srli_si128(x, 1);
-		_mm_store_si128((__m128i*)us[0][i], u);
-		_mm_store_si128((__m128i*)es[0][i], e);
-		_mm_store_si128((__m128i*)qs[0][i], x);
-		u = _mm_load_si128((__m128i*)us[1][(i + mov - W + 1) % W]);
-		u = _mm_srli_si128(u, 1);
+		e = mm_load((xint*)es[1][i + mov - W]);
+		x = mm_load((xint*)qs[1][i + mov - W]);
+		e = mm_srli(e, 1);
+		x = mm_srli(x, 1);
+		mm_store((xint*)us[0][i], u);
+		mm_store((xint*)es[0][i], e);
+		mm_store((xint*)qs[0][i], x);
+		u = mm_load((xint*)us[1][(i + mov - W + 1) % W]);
+		u = mm_srli(u, 1);
 	}
 }
 
 static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base, b1i **us[2], b1i **es[2], b1i **qs[2], b1i *bs, b1v *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, int ph, int rh){
-	__m128i h, e, f, u, v, c, d, m2[2], m4[4];
-	__m128i I, D, GapE;
-	int ms[16];
-	b1i vs[16];
+	xint h, e, f, u, v, c, d, m2[2], m4[4];
+	xint I, D, GapE;
+	int ms[WORDSIZE];
+	b1i vs[WORDSIZE];
 	u4i i, k;
 	int s, t, h0;
 	UNUSED(es);
@@ -314,18 +327,18 @@ static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base
 	UNUSED(gapo1);
 	UNUSED(gapo2);
 	UNUSED(gape2);
-	I     = _mm_set1_epi8(SEQALIGN_BT_I1);
-	D     = _mm_set1_epi8(SEQALIGN_BT_D1);
-	GapE  = _mm_set1_epi8(gape1);
+	I     = mm_set1_epi8(SEQALIGN_BT_I1);
+	D     = mm_set1_epi8(SEQALIGN_BT_D1);
+	GapE  = mm_set1_epi8(gape1);
 	// ::: max(h, e, f)
-	m2[0] = _mm_set1_epi16(0);
-	m2[1] = _mm_set1_epi16(0);
-	m4[0] = _mm_set1_epi32(0);
-	m4[1] = _mm_set1_epi32(0);
-	m4[2] = _mm_set1_epi32(0);
-	m4[3] = _mm_set1_epi32(0);
-	f = _mm_set1_epi8(SEQALIGN_SCORE_EPI8_MIN);
-	h0 = (rh - ph) + qprof->buffer[((rbeg + 0) * 4 + base) * 16]; // h
+	m2[0] = mm_set1_epi16(0);
+	m2[1] = mm_set1_epi16(0);
+	m4[0] = mm_set1_epi32(0);
+	m4[1] = mm_set1_epi32(0);
+	m4[2] = mm_set1_epi32(0);
+	m4[3] = mm_set1_epi32(0);
+	f = mm_set1_epi8(SEQALIGN_SCORE_EPI8_MIN);
+	h0 = (rh - ph) + qprof->buffer[((rbeg + 0) * 4 + base) * WORDSIZE]; // h
 	t = us[0][0][0] + gape1; // e
 	if(h0 >= t){
 		if(h0 > SEQALIGN_SCORE_EPI8_MAX) h0 = SEQALIGN_SCORE_EPI8_MAX; // score will loss, please never set rh - ph >= SEQALIGN_SCORE_EPI8_MAX - base_match_score
@@ -333,85 +346,85 @@ static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base
 		h0 = SEQALIGN_SCORE_EPI8_MIN;
 	}
 	// preparing initial f for each running block
-	h = _mm_load_si128(((__m128i*)qprof->buffer) + (rbeg + 0) * 4 + base);
-	h = _mm_insert_epi8(h, h0, 0);
+	h = mm_load(((xint*)qprof->buffer) + (rbeg + 0) * 4 + base);
+	h = mm_insert_epi8(h, h0, 0);
 	for(i=0;i<W;){
 		k = num_min(i + 256, W);
 		for(;i<k;i++){
-			u = _mm_load_si128((__m128i*)us[0][i]);
+			u = mm_load((xint*)us[0][i]);
 			// sums us[0] within each running block
-			m2[0] = _mm_subs_epi16(m2[0], _mm_cvtepi8_epi16(u));
-			m2[1] = _mm_subs_epi16(m2[1], _mm_cvtepi8_epi16(_mm_srli_si128(u, 8)));
+			m2[0] = mm_subs_epi16(m2[0], mm_cvtepi8lo_epi16(u));
+			m2[1] = mm_subs_epi16(m2[1], mm_cvtepi8hi_epi16(u));
 			// max h, e, f
-			e = _mm_adds_epi8(u, GapE);
-			h = _mm_max_epi8(e, h);
-			h = _mm_max_epi8(f, h);
+			e = mm_adds_epi8(u, GapE);
+			h = mm_max_epi8(e, h);
+			h = mm_max_epi8(f, h);
 			// preparing next f
-			f = _mm_adds_epi8(h, GapE);
-			f = _mm_subs_epi8(f, u);
+			f = mm_adds_epi8(h, GapE);
+			f = mm_subs_epi8(f, u);
 			// preparing next h
-			h = _mm_load_si128(((__m128i*)qprof->buffer) + (rbeg + i + 1) * 4 + base);
+			h = mm_load(((xint*)qprof->buffer) + (rbeg + i + 1) * 4 + base);
 		}
 		{
-			m4[0] = _mm_add_epi32(m4[0], _mm_cvtepi16_epi32(m2[0]));
-			m4[1] = _mm_add_epi32(m4[1], _mm_cvtepi16_epi32(_mm_srli_si128(m2[0], 8)));
-			m4[2] = _mm_add_epi32(m4[2], _mm_cvtepi16_epi32(m2[1]));
-			m4[3] = _mm_add_epi32(m4[3], _mm_cvtepi16_epi32(_mm_srli_si128(m2[1], 8)));
-			m2[0] = _mm_set1_epi16(0);
-			m2[1] = _mm_set1_epi16(0);
+			m4[0] = mm_add_epi32(m4[0], mm_cvtepi16lo_epi32(m2[0]));
+			m4[1] = mm_add_epi32(m4[1], mm_cvtepi16hi_epi32(m2[0]));
+			m4[2] = mm_add_epi32(m4[2], mm_cvtepi16lo_epi32(m2[1]));
+			m4[3] = mm_add_epi32(m4[3], mm_cvtepi16hi_epi32(m2[1]));
+			m2[0] = mm_set1_epi16(0);
+			m2[1] = mm_set1_epi16(0);
 		}
 	}
-	_mm_store_si128(((__m128i*)ms) + 0, m4[0]);
-	_mm_store_si128(((__m128i*)ms) + 1, m4[1]);
-	_mm_store_si128(((__m128i*)ms) + 2, m4[2]);
-	_mm_store_si128(((__m128i*)ms) + 3, m4[3]);
-	f = _mm_slli_si128(f, 1);
-	_mm_store_si128((__m128i*)vs, f);
+	mm_store(((xint*)ms) + 0, m4[0]);
+	mm_store(((xint*)ms) + 1, m4[1]);
+	mm_store(((xint*)ms) + 2, m4[2]);
+	mm_store(((xint*)ms) + 3, m4[3]);
+	f = mm_slli(f, 1);
+	mm_store((xint*)vs, f);
 	vs[0] = SEQALIGN_SCORE_EPI8_MIN;
 	t = W * gape1;
 	s = t + vs[0] + ms[0];
-	for(i=1;i<16;i++){
+	for(i=1;i<WORDSIZE;i++){
 		if(vs[i] < s) vs[i] = s;
 		s = t + vs[i] + ms[i];
 	}
-	f = _mm_load_si128((__m128i*)vs);
+	f = mm_load((xint*)vs);
 	// main loop
 	// don't use the h from last W - 1 to calculate v = h - u, because this h maybe updated when F-penetration
 	// will revise v after this loop
-	v = _mm_set1_epi8(0);
-	h = _mm_load_si128(((__m128i*)qprof->buffer) + (rbeg + 0) * 4 + base);
-	h = _mm_insert_epi8(h, h0, 0);
-	u = _mm_set1_epi8(0); // useless, but for compiler
+	v = mm_set1_epi8(0);
+	h = mm_load(((xint*)qprof->buffer) + (rbeg + 0) * 4 + base);
+	h = mm_insert_epi8(h, h0, 0);
+	u = mm_set1_epi8(0); // useless, but for compiler
 	for(i=0;i<W;i++){
-		u = _mm_load_si128((__m128i*)us[0][i]);
+		u = mm_load((xint*)us[0][i]);
 		// max(e, h)
-		e = _mm_adds_epi8(u, GapE);
-		c = _mm_cmpgt_epi8(e, h);
-		d = _mm_and_si128(c, D); // bt
-		h = _mm_max_epi8(e, h);
+		e = mm_adds_epi8(u, GapE);
+		c = mm_cmpgt_epi8(e, h);
+		d = mm_and(c, D); // bt
+		h = mm_max_epi8(e, h);
 		// max(f, h)
-		c = _mm_cmpgt_epi8(f, h);
-		d = _mm_blendv_epi8(d, I, c);
-		h = _mm_max_epi8(f, h);
-		_mm_store_si128(((__m128i*)bs) + i, d);
+		c = mm_cmpgt_epi8(f, h);
+		d = mm_blendv_epi8(d, I, c);
+		h = mm_max_epi8(f, h);
+		mm_store(((xint*)bs) + i, d);
 		// calculate u(x, y)
-		v = _mm_subs_epi8(h, v);
-		_mm_store_si128((__m128i*)us[1][i], v);
-		v = _mm_subs_epi8(h, u);
+		v = mm_subs_epi8(h, v);
+		mm_store((xint*)us[1][i], v);
+		v = mm_subs_epi8(h, u);
 		// calculate f(x, y)
-		f = _mm_adds_epi8(h, GapE);
-		f = _mm_subs_epi8(f, u);
+		f = mm_adds_epi8(h, GapE);
+		f = mm_subs_epi8(f, u);
 		if(__builtin_expect(i + 1 == W, 0)){
 		} else {
-			h = _mm_load_si128(((__m128i*)qprof->buffer) + (rbeg + i + 1) * 4 + base);
+			h = mm_load(((xint*)qprof->buffer) + (rbeg + i + 1) * 4 + base);
 		}
 	}
 	// revise the first striped block of u
-	v = _mm_subs_epi8(h, u);
-	v = _mm_slli_si128(v, 1);
-	u = _mm_load_si128((__m128i*)us[1][0]);
-	u = _mm_subs_epi8(u, v);
-	_mm_store_si128((__m128i*)us[1][0], u);
+	v = mm_subs_epi8(h, u);
+	v = mm_slli(v, 1);
+	u = mm_load((xint*)us[1][0]);
+	u = mm_subs_epi8(u, v);
+	mm_store((xint*)us[1][0], u);
 	// shift score to fit EPI8
 	rh = ph + us[1][0][0];
 	us[1][0][0] = 0;
@@ -419,30 +432,30 @@ static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base
 }
 
 static inline int banded_striped_epi8_seqalign_piece1_row_cal(u4i rbeg, u1i base, b1i **us[2], b1i **es[2], b1i **qs[2], b1i *bs, b1v *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, int ph, int rh){
-	__m128i h, e, f, u, v, c, d, m2[2], m4[4];
-	__m128i I, IE, D, DE, GapOE, GapE;
-	int ms[16];
-	b1i vs[16];
+	xint h, e, f, u, v, c, d, m2[2], m4[4];
+	xint I, IE, D, DE, GapOE, GapE;
+	int ms[WORDSIZE];
+	b1i vs[WORDSIZE];
 	u4i i, k;
 	int s, t, h0;
 	UNUSED(qs);
 	UNUSED(gapo2);
 	UNUSED(gape2);
-	I     = _mm_set1_epi8(SEQALIGN_BT_I1);
-	IE    = _mm_set1_epi8(SEQALIGN_BT_IE1);
-	D     = _mm_set1_epi8(SEQALIGN_BT_D1);
-	DE    = _mm_set1_epi8(SEQALIGN_BT_DE1);
-	GapOE = _mm_set1_epi8(gapo1 + gape1);
-	GapE  = _mm_set1_epi8(gape1);
+	I     = mm_set1_epi8(SEQALIGN_BT_I1);
+	IE    = mm_set1_epi8(SEQALIGN_BT_IE1);
+	D     = mm_set1_epi8(SEQALIGN_BT_D1);
+	DE    = mm_set1_epi8(SEQALIGN_BT_DE1);
+	GapOE = mm_set1_epi8(gapo1 + gape1);
+	GapE  = mm_set1_epi8(gape1);
 	// ::: max(h, e, f)
-	m2[0] = _mm_set1_epi16(0);
-	m2[1] = _mm_set1_epi16(0);
-	m4[0] = _mm_set1_epi32(0);
-	m4[1] = _mm_set1_epi32(0);
-	m4[2] = _mm_set1_epi32(0);
-	m4[3] = _mm_set1_epi32(0);
-	f = _mm_set1_epi8(SEQALIGN_SCORE_EPI8_MIN);
-	h0 = (rh - ph) + qprof->buffer[((rbeg + 0) * 4 + base) * 16]; // h
+	m2[0] = mm_set1_epi16(0);
+	m2[1] = mm_set1_epi16(0);
+	m4[0] = mm_set1_epi32(0);
+	m4[1] = mm_set1_epi32(0);
+	m4[2] = mm_set1_epi32(0);
+	m4[3] = mm_set1_epi32(0);
+	f = mm_set1_epi8(SEQALIGN_SCORE_EPI8_MIN);
+	h0 = (rh - ph) + qprof->buffer[((rbeg + 0) * 4 + base) * WORDSIZE]; // h
 	t = us[0][0][0] + es[0][0][0]; // e
 	if(h0 >= t){
 		if(h0 > SEQALIGN_SCORE_EPI8_MAX) h0 = SEQALIGN_SCORE_EPI8_MAX; // score will loss, please never set rh - ph >= SEQALIGN_SCORE_EPI8_MAX - base_match_score
@@ -450,101 +463,101 @@ static inline int banded_striped_epi8_seqalign_piece1_row_cal(u4i rbeg, u1i base
 		h0 = SEQALIGN_SCORE_EPI8_MIN;
 	}
 	// preparing initial f for each running block
-	h = _mm_load_si128(((__m128i*)qprof->buffer) + (rbeg + 0) * 4 + base);
-	h = _mm_insert_epi8(h, h0, 0);
+	h = mm_load(((xint*)qprof->buffer) + (rbeg + 0) * 4 + base);
+	h = mm_insert_epi8(h, h0, 0);
 	for(i=0;i<W;){
 		k = num_min(i + 256, W);
 		for(;i<k;i++){
-			u = _mm_load_si128((__m128i*)us[0][i]);
+			u = mm_load((xint*)us[0][i]);
 			// sums us[0] within each running block
-			m2[0] = _mm_subs_epi16(m2[0], _mm_cvtepi8_epi16(u));
-			m2[1] = _mm_subs_epi16(m2[1], _mm_cvtepi8_epi16(_mm_srli_si128(u, 8)));
+			m2[0] = mm_subs_epi16(m2[0], mm_cvtepi8lo_epi16(u));
+			m2[1] = mm_subs_epi16(m2[1], mm_cvtepi8hi_epi16(u));
 			// max h, e, f
-			e = _mm_load_si128((__m128i*)es[0][i]);
-			e = _mm_adds_epi8(e, u);
-			h = _mm_max_epi8(e, h);
-			h = _mm_max_epi8(f, h);
+			e = mm_load((xint*)es[0][i]);
+			e = mm_adds_epi8(e, u);
+			h = mm_max_epi8(e, h);
+			h = mm_max_epi8(f, h);
 			// preparing next f
-			f = _mm_adds_epi8(f, GapE);
-			h = _mm_adds_epi8(h, GapOE);
-			f = _mm_max_epi8(f, h);
-			f = _mm_subs_epi8(f, u);
+			f = mm_adds_epi8(f, GapE);
+			h = mm_adds_epi8(h, GapOE);
+			f = mm_max_epi8(f, h);
+			f = mm_subs_epi8(f, u);
 			// preparing next h
-			h = _mm_load_si128(((__m128i*)qprof->buffer) + (rbeg + i + 1) * 4 + base);
+			h = mm_load(((xint*)qprof->buffer) + (rbeg + i + 1) * 4 + base);
 		}
 		{
-			m4[0] = _mm_add_epi32(m4[0], _mm_cvtepi16_epi32(m2[0]));
-			m4[1] = _mm_add_epi32(m4[1], _mm_cvtepi16_epi32(_mm_srli_si128(m2[0], 8)));
-			m4[2] = _mm_add_epi32(m4[2], _mm_cvtepi16_epi32(m2[1]));
-			m4[3] = _mm_add_epi32(m4[3], _mm_cvtepi16_epi32(_mm_srli_si128(m2[1], 8)));
-			m2[0] = _mm_set1_epi16(0);
-			m2[1] = _mm_set1_epi16(0);
+			m4[0] = mm_add_epi32(m4[0], mm_cvtepi16lo_epi32(m2[0]));
+			m4[1] = mm_add_epi32(m4[1], mm_cvtepi16hi_epi32(m2[0]));
+			m4[2] = mm_add_epi32(m4[2], mm_cvtepi16lo_epi32(m2[1]));
+			m4[3] = mm_add_epi32(m4[3], mm_cvtepi16hi_epi32(m2[1]));
+			m2[0] = mm_set1_epi16(0);
+			m2[1] = mm_set1_epi16(0);
 		}
 	}
-	_mm_store_si128(((__m128i*)ms) + 0, m4[0]);
-	_mm_store_si128(((__m128i*)ms) + 1, m4[1]);
-	_mm_store_si128(((__m128i*)ms) + 2, m4[2]);
-	_mm_store_si128(((__m128i*)ms) + 3, m4[3]);
-	f = _mm_slli_si128(f, 1);
-	_mm_store_si128((__m128i*)vs, f);
+	mm_store(((xint*)ms) + 0, m4[0]);
+	mm_store(((xint*)ms) + 1, m4[1]);
+	mm_store(((xint*)ms) + 2, m4[2]);
+	mm_store(((xint*)ms) + 3, m4[3]);
+	f = mm_slli(f, 1);
+	mm_store((xint*)vs, f);
 	vs[0] = SEQALIGN_SCORE_EPI8_MIN;
 	t = W * gape1;
 	s = t + vs[0] + ms[0];
-	for(i=1;i<16;i++){
+	for(i=1;i<WORDSIZE;i++){
 		if(vs[i] < s) vs[i] = s;
 		s = t + vs[i] + ms[i];
 	}
-	f = _mm_load_si128((__m128i*)vs);
+	f = mm_load((xint*)vs);
 	// main loop
 	// don't use the h from last W - 1 to calculate v = h - u, because this h maybe updated when F-penetration
 	// will revise v after this loop
-	v = _mm_set1_epi8(0);
-	h = _mm_load_si128(((__m128i*)qprof->buffer) + (rbeg + 0) * 4 + base);
-	h = _mm_insert_epi8(h, h0, 0);
-	u = _mm_set1_epi8(0); // useless, but for compiler
+	v = mm_set1_epi8(0);
+	h = mm_load(((xint*)qprof->buffer) + (rbeg + 0) * 4 + base);
+	h = mm_insert_epi8(h, h0, 0);
+	u = mm_set1_epi8(0); // useless, but for compiler
 	for(i=0;i<W;i++){
-		u = _mm_load_si128((__m128i*)us[0][i]);
-		e = _mm_load_si128((__m128i*)es[0][i]);
+		u = mm_load((xint*)us[0][i]);
+		e = mm_load((xint*)es[0][i]);
 		// max(e, h)
-		e = _mm_adds_epi8(e, u);
-		c = _mm_cmpgt_epi8(e, h);
-		d = _mm_and_si128(c, D); // bt
-		h = _mm_max_epi8(e, h);
+		e = mm_adds_epi8(e, u);
+		c = mm_cmpgt_epi8(e, h);
+		d = mm_and(c, D); // bt
+		h = mm_max_epi8(e, h);
 		// max(f, h)
-		c = _mm_cmpgt_epi8(f, h);
-		d = _mm_blendv_epi8(d, I, c);
-		h = _mm_max_epi8(f, h);
+		c = mm_cmpgt_epi8(f, h);
+		d = mm_blendv_epi8(d, I, c);
+		h = mm_max_epi8(f, h);
 		// calculate u(x, y)
-		v = _mm_subs_epi8(h, v);
-		_mm_store_si128((__m128i*)us[1][i], v);
-		v = _mm_subs_epi8(h, u);
+		v = mm_subs_epi8(h, v);
+		mm_store((xint*)us[1][i], v);
+		v = mm_subs_epi8(h, u);
 		// calculate e(x, y)
-		e = _mm_adds_epi8(e, GapE);
-		e = _mm_subs_epi8(e, h);
-		c = _mm_cmpgt_epi8(e, GapOE);
-		d = _mm_or_si128(d, _mm_and_si128(c, DE));
-		e = _mm_max_epi8(e, GapOE);
-		_mm_store_si128((__m128i*)es[1][i], e);
+		e = mm_adds_epi8(e, GapE);
+		e = mm_subs_epi8(e, h);
+		c = mm_cmpgt_epi8(e, GapOE);
+		d = mm_or(d, mm_and(c, DE));
+		e = mm_max_epi8(e, GapOE);
+		mm_store((xint*)es[1][i], e);
 		// calculate f(x, y)
-		f = _mm_adds_epi8(f, GapE);
-		h = _mm_adds_epi8(h, GapOE);
-		c = _mm_cmpgt_epi8(f, h);
-		d = _mm_or_si128(d, _mm_and_si128(c, IE));
-		_mm_store_si128(((__m128i*)bs) + i, d);
-		f = _mm_max_epi8(f, h);
-		f = _mm_subs_epi8(f, u);
+		f = mm_adds_epi8(f, GapE);
+		h = mm_adds_epi8(h, GapOE);
+		c = mm_cmpgt_epi8(f, h);
+		d = mm_or(d, mm_and(c, IE));
+		mm_store(((xint*)bs) + i, d);
+		f = mm_max_epi8(f, h);
+		f = mm_subs_epi8(f, u);
 		if(__builtin_expect(i + 1 == W, 0)){
-			h = _mm_subs_epi8(h, GapOE);
+			h = mm_subs_epi8(h, GapOE);
 		} else {
-			h = _mm_load_si128(((__m128i*)qprof->buffer) + (rbeg + i + 1) * 4 + base);
+			h = mm_load(((xint*)qprof->buffer) + (rbeg + i + 1) * 4 + base);
 		}
 	}
 	// revise the first striped block of u
-	v = _mm_subs_epi8(h, u);
-	v = _mm_slli_si128(v, 1);
-	u = _mm_load_si128((__m128i*)us[1][0]);
-	u = _mm_subs_epi8(u, v);
-	_mm_store_si128((__m128i*)us[1][0], u);
+	v = mm_subs_epi8(h, u);
+	v = mm_slli(v, 1);
+	u = mm_load((xint*)us[1][0]);
+	u = mm_subs_epi8(u, v);
+	mm_store((xint*)us[1][0], u);
 	// shift score to fit EPI8
 	rh = ph + us[1][0][0];
 	us[1][0][0] = 0;
@@ -552,35 +565,35 @@ static inline int banded_striped_epi8_seqalign_piece1_row_cal(u4i rbeg, u1i base
 }
 
 static inline int banded_striped_epi8_seqalign_piece2_row_cal(u4i rbeg, u1i base, b1i **us[2], b1i **es[2], b1i **qs[2], b1i *bs, b1v *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, int ph, int rh){
-	__m128i h, e, q, f, g, u, v, c, d, m2[2], m4[4];
-	__m128i I1, I2, IE1, IE2, D1, D2, DE1, DE2, GapOE, GapE, GapQP, GapP, GapOQ;
-	int ms[16];
-	b1i vs[16];
+	xint h, e, q, f, g, u, v, c, d, m2[2], m4[4];
+	xint I1, I2, IE1, IE2, D1, D2, DE1, DE2, GapOE, GapE, GapQP, GapP, GapOQ;
+	int ms[WORDSIZE];
+	b1i vs[WORDSIZE];
 	u4i i, k;
 	int s, t, h0;
-	I1     = _mm_set1_epi8(SEQALIGN_BT_I1);
-	I2     = _mm_set1_epi8(SEQALIGN_BT_I2);
-	IE1    = _mm_set1_epi8(SEQALIGN_BT_IE1);
-	IE2    = _mm_set1_epi8(SEQALIGN_BT_IE2);
-	D1     = _mm_set1_epi8(SEQALIGN_BT_D1);
-	D2     = _mm_set1_epi8(SEQALIGN_BT_D2);
-	DE1    = _mm_set1_epi8(SEQALIGN_BT_DE1);
-	DE2    = _mm_set1_epi8(SEQALIGN_BT_DE2);
-	GapOE = _mm_set1_epi8(gapo1 + gape1);
-	GapE  = _mm_set1_epi8(gape1);
-	GapQP = _mm_set1_epi8(gapo2 + gape2);
-	GapP  = _mm_set1_epi8(gape2);
-	GapOQ = _mm_subs_epi8(GapOE, GapQP);
+	I1     = mm_set1_epi8(SEQALIGN_BT_I1);
+	I2     = mm_set1_epi8(SEQALIGN_BT_I2);
+	IE1    = mm_set1_epi8(SEQALIGN_BT_IE1);
+	IE2    = mm_set1_epi8(SEQALIGN_BT_IE2);
+	D1     = mm_set1_epi8(SEQALIGN_BT_D1);
+	D2     = mm_set1_epi8(SEQALIGN_BT_D2);
+	DE1    = mm_set1_epi8(SEQALIGN_BT_DE1);
+	DE2    = mm_set1_epi8(SEQALIGN_BT_DE2);
+	GapOE = mm_set1_epi8(gapo1 + gape1);
+	GapE  = mm_set1_epi8(gape1);
+	GapQP = mm_set1_epi8(gapo2 + gape2);
+	GapP  = mm_set1_epi8(gape2);
+	GapOQ = mm_subs_epi8(GapOE, GapQP);
 	// ::: max(h, e, f)
-	m2[0] = _mm_set1_epi16(0);
-	m2[1] = _mm_set1_epi16(0);
-	m4[0] = _mm_set1_epi32(0);
-	m4[1] = _mm_set1_epi32(0);
-	m4[2] = _mm_set1_epi32(0);
-	m4[3] = _mm_set1_epi32(0);
-	f = _mm_set1_epi8(SEQALIGN_SCORE_EPI8_MIN);
-	g = _mm_set1_epi8(SEQALIGN_SCORE_EPI8_MIN);
-	h0 = (rh - ph) + qprof->buffer[((rbeg + 0) * 4 + base) * 16]; // h
+	m2[0] = mm_set1_epi16(0);
+	m2[1] = mm_set1_epi16(0);
+	m4[0] = mm_set1_epi32(0);
+	m4[1] = mm_set1_epi32(0);
+	m4[2] = mm_set1_epi32(0);
+	m4[3] = mm_set1_epi32(0);
+	f = mm_set1_epi8(SEQALIGN_SCORE_EPI8_MIN);
+	g = mm_set1_epi8(SEQALIGN_SCORE_EPI8_MIN);
+	h0 = (rh - ph) + qprof->buffer[((rbeg + 0) * 4 + base) * WORDSIZE]; // h
 	t = us[0][0][0] + num_max(es[0][0][0], qs[0][0][0]); // e
 	if(h0 >= t){
 		if(h0 > SEQALIGN_SCORE_EPI8_MAX) h0 = SEQALIGN_SCORE_EPI8_MAX; // score will loss, please never set rh - ph >= SEQALIGN_SCORE_EPI8_MAX - base_match_score
@@ -588,253 +601,243 @@ static inline int banded_striped_epi8_seqalign_piece2_row_cal(u4i rbeg, u1i base
 		h0 = SEQALIGN_SCORE_EPI8_MIN;
 	}
 	// preparing initial f for each running block
-	h = _mm_load_si128(((__m128i*)qprof->buffer) + (rbeg + 0) * 4 + base);
-	h = _mm_insert_epi8(h, h0, 0);
+	h = mm_load(((xint*)qprof->buffer) + (rbeg + 0) * 4 + base);
+	h = mm_insert_epi8(h, h0, 0);
 	for(i=0;i<W;){
 		k = num_min(i + 256, W);
 		for(;i<k;i++){
-			u = _mm_load_si128((__m128i*)us[0][i]);
+			u = mm_load((xint*)us[0][i]);
 			// sums us[0] within each running block
-			m2[0] = _mm_subs_epi16(m2[0], _mm_cvtepi8_epi16(u));
-			m2[1] = _mm_subs_epi16(m2[1], _mm_cvtepi8_epi16(_mm_srli_si128(u, 8)));
+			m2[0] = mm_subs_epi16(m2[0], mm_cvtepi8lo_epi16(u));
+			m2[1] = mm_subs_epi16(m2[1], mm_cvtepi8hi_epi16(u));
 			// max h, e, q, f, g
-			e = _mm_load_si128((__m128i*)es[0][i]);
-			q = _mm_load_si128((__m128i*)qs[0][i]);
-			e = _mm_adds_epi8(e, u);
-			q = _mm_adds_epi8(q, u);
-			h = _mm_max_epi8(e, h);
-			h = _mm_max_epi8(q, h);
-			h = _mm_max_epi8(f, h);
-			h = _mm_max_epi8(g, h);
+			e = mm_load((xint*)es[0][i]);
+			q = mm_load((xint*)qs[0][i]);
+			e = mm_adds_epi8(e, u);
+			q = mm_adds_epi8(q, u);
+			h = mm_max_epi8(e, h);
+			h = mm_max_epi8(q, h);
+			h = mm_max_epi8(f, h);
+			h = mm_max_epi8(g, h);
 			// preparing next f and g
-			f = _mm_adds_epi8(f, GapE);
-			h = _mm_adds_epi8(h, GapOE);
-			f = _mm_max_epi8(f, h);
-			f = _mm_subs_epi8(f, u);
-			g = _mm_adds_epi8(g, GapP);
-			h = _mm_subs_epi8(h, GapOQ); // gapo1 + gape1 - gapo2 - gape2
-			g = _mm_max_epi8(g, h);
-			g = _mm_subs_epi8(g, u);
+			f = mm_adds_epi8(f, GapE);
+			h = mm_adds_epi8(h, GapOE);
+			f = mm_max_epi8(f, h);
+			f = mm_subs_epi8(f, u);
+			g = mm_adds_epi8(g, GapP);
+			h = mm_subs_epi8(h, GapOQ); // gapo1 + gape1 - gapo2 - gape2
+			g = mm_max_epi8(g, h);
+			g = mm_subs_epi8(g, u);
 			// preparing next h
-			h = _mm_load_si128(((__m128i*)qprof->buffer) + (rbeg + i + 1) * 4 + base);
+			h = mm_load(((xint*)qprof->buffer) + (rbeg + i + 1) * 4 + base);
 		}
 		{
-			m4[0] = _mm_add_epi32(m4[0], _mm_cvtepi16_epi32(m2[0]));
-			m4[1] = _mm_add_epi32(m4[1], _mm_cvtepi16_epi32(_mm_srli_si128(m2[0], 8)));
-			m4[2] = _mm_add_epi32(m4[2], _mm_cvtepi16_epi32(m2[1]));
-			m4[3] = _mm_add_epi32(m4[3], _mm_cvtepi16_epi32(_mm_srli_si128(m2[1], 8)));
-			m2[0] = _mm_set1_epi16(0);
-			m2[1] = _mm_set1_epi16(0);
+			m4[0] = mm_add_epi32(m4[0], mm_cvtepi16lo_epi32(m2[0]));
+			m4[1] = mm_add_epi32(m4[1], mm_cvtepi16hi_epi32(m2[0]));
+			m4[2] = mm_add_epi32(m4[2], mm_cvtepi16lo_epi32(m2[1]));
+			m4[3] = mm_add_epi32(m4[3], mm_cvtepi16hi_epi32(m2[1]));
+			m2[0] = mm_set1_epi16(0);
+			m2[1] = mm_set1_epi16(0);
 		}
 	}
-	_mm_store_si128(((__m128i*)ms) + 0, m4[0]);
-	_mm_store_si128(((__m128i*)ms) + 1, m4[1]);
-	_mm_store_si128(((__m128i*)ms) + 2, m4[2]);
-	_mm_store_si128(((__m128i*)ms) + 3, m4[3]);
-	f = _mm_slli_si128(f, 1);
-	_mm_store_si128((__m128i*)vs, f);
+	mm_store(((xint*)ms) + 0, m4[0]);
+	mm_store(((xint*)ms) + 1, m4[1]);
+	mm_store(((xint*)ms) + 2, m4[2]);
+	mm_store(((xint*)ms) + 3, m4[3]);
+	f = mm_slli(f, 1);
+	mm_store((xint*)vs, f);
 	vs[0] = SEQALIGN_SCORE_EPI8_MIN;
 	t = W * gape1;
 	s = t + vs[0] + ms[0];
-	for(i=1;i<16;i++){
+	for(i=1;i<WORDSIZE;i++){
 		if(vs[i] < s) vs[i] = s;
 		s = t + vs[i] + ms[i];
 	}
-	f = _mm_load_si128((__m128i*)vs);
-	g = _mm_slli_si128(g, 1);
-	_mm_store_si128((__m128i*)vs, g);
+	f = mm_load((xint*)vs);
+	g = mm_slli(g, 1);
+	mm_store((xint*)vs, g);
 	vs[0] = SEQALIGN_SCORE_EPI8_MIN;
 	t = W * gape2;
 	s = t + vs[0] + ms[0];
-	for(i=1;i<16;i++){
+	for(i=1;i<WORDSIZE;i++){
 		if(vs[i] < s){
 			vs[i] = s;
 		}
 		s = t + vs[i] + ms[i];
 	}
-	g = _mm_load_si128((__m128i*)vs);
+	g = mm_load((xint*)vs);
 	// main loop
-	v = _mm_set1_epi8(0);
-	h = _mm_load_si128(((__m128i*)qprof->buffer) + (rbeg + 0) * 4 + base);
-	h = _mm_insert_epi8(h, h0, 0);
-	u = _mm_set1_epi8(0); // useless, but for compiler
+	v = mm_set1_epi8(0);
+	h = mm_load(((xint*)qprof->buffer) + (rbeg + 0) * 4 + base);
+	h = mm_insert_epi8(h, h0, 0);
+	u = mm_set1_epi8(0); // useless, but for compiler
 	for(i=0;i<W;i++){
-		u = _mm_load_si128((__m128i*)us[0][i]);
-		e = _mm_load_si128((__m128i*)es[0][i]);
-		q = _mm_load_si128((__m128i*)qs[0][i]);
+		u = mm_load((xint*)us[0][i]);
+		e = mm_load((xint*)es[0][i]);
+		q = mm_load((xint*)qs[0][i]);
 		// max(e, q, h)
-		e = _mm_adds_epi8(e, u);
-		c = _mm_cmpgt_epi8(e, h);
-		d = _mm_and_si128(c, D1); // bt
-		h = _mm_max_epi8(e, h);
-		q = _mm_adds_epi8(q, u);
-		c = _mm_cmpgt_epi8(q, h);
-		d = _mm_blendv_epi8(d, D2, c);
-		h = _mm_max_epi8(q, h);
+		e = mm_adds_epi8(e, u);
+		c = mm_cmpgt_epi8(e, h);
+		d = mm_and(c, D1); // bt
+		h = mm_max_epi8(e, h);
+		q = mm_adds_epi8(q, u);
+		c = mm_cmpgt_epi8(q, h);
+		d = mm_blendv_epi8(d, D2, c);
+		h = mm_max_epi8(q, h);
 		// max(f, g, h)
-		c = _mm_cmpgt_epi8(f, h);
-		d = _mm_blendv_epi8(d, I1, c);
-		h = _mm_max_epi8(f, h);
-		c = _mm_cmpgt_epi8(g, h);
-		d = _mm_blendv_epi8(d, I2, c);
-		h = _mm_max_epi8(g, h);
+		c = mm_cmpgt_epi8(f, h);
+		d = mm_blendv_epi8(d, I1, c);
+		h = mm_max_epi8(f, h);
+		c = mm_cmpgt_epi8(g, h);
+		d = mm_blendv_epi8(d, I2, c);
+		h = mm_max_epi8(g, h);
 		// calculate u(x, y)
-		v = _mm_subs_epi8(h, v);
-		_mm_store_si128((__m128i*)us[1][i], v);
-		v = _mm_subs_epi8(h, u);
+		v = mm_subs_epi8(h, v);
+		mm_store((xint*)us[1][i], v);
+		v = mm_subs_epi8(h, u);
 		// calculate e(x, y) and q(x, y)
-		e = _mm_adds_epi8(e, GapE);
-		e = _mm_subs_epi8(e, h);
-		c = _mm_cmpgt_epi8(e, GapOE);
-		d = _mm_or_si128(d, _mm_and_si128(c, DE1));
-		e = _mm_max_epi8(e, GapOE);
-		_mm_store_si128((__m128i*)es[1][i], e);
-		q = _mm_adds_epi8(q, GapP);
-		q = _mm_subs_epi8(q, h);
-		c = _mm_cmpgt_epi8(q, GapQP);
-		d = _mm_or_si128(d, _mm_and_si128(c, DE2));
-		q = _mm_max_epi8(q, GapQP);
-		_mm_store_si128((__m128i*)qs[1][i], q);
+		e = mm_adds_epi8(e, GapE);
+		e = mm_subs_epi8(e, h);
+		c = mm_cmpgt_epi8(e, GapOE);
+		d = mm_or(d, mm_and(c, DE1));
+		e = mm_max_epi8(e, GapOE);
+		mm_store((xint*)es[1][i], e);
+		q = mm_adds_epi8(q, GapP);
+		q = mm_subs_epi8(q, h);
+		c = mm_cmpgt_epi8(q, GapQP);
+		d = mm_or(d, mm_and(c, DE2));
+		q = mm_max_epi8(q, GapQP);
+		mm_store((xint*)qs[1][i], q);
 		// calculate f(x, y) and g(x, y)
-		f = _mm_adds_epi8(f, GapE);
-		h = _mm_adds_epi8(h, GapOE);
-		c = _mm_cmpgt_epi8(f, h);
-		d = _mm_or_si128(d, _mm_and_si128(c, IE1));
-		f = _mm_max_epi8(f, h);
-		f = _mm_subs_epi8(f, u);
-		g = _mm_adds_epi8(g, GapP);
-		h = _mm_subs_epi8(h, GapOQ); // (gapo1 + gape1 - gapo2 - gape2)
-		c = _mm_cmpgt_epi8(g, h);
-		d = _mm_or_si128(d, _mm_and_si128(c, IE2));
-		g = _mm_max_epi8(g, h);
-		g = _mm_subs_epi8(g, u);
-		_mm_store_si128(((__m128i*)bs) + i, d);
+		f = mm_adds_epi8(f, GapE);
+		h = mm_adds_epi8(h, GapOE);
+		c = mm_cmpgt_epi8(f, h);
+		d = mm_or(d, mm_and(c, IE1));
+		f = mm_max_epi8(f, h);
+		f = mm_subs_epi8(f, u);
+		g = mm_adds_epi8(g, GapP);
+		h = mm_subs_epi8(h, GapOQ); // (gapo1 + gape1 - gapo2 - gape2)
+		c = mm_cmpgt_epi8(g, h);
+		d = mm_or(d, mm_and(c, IE2));
+		g = mm_max_epi8(g, h);
+		g = mm_subs_epi8(g, u);
+		mm_store(((xint*)bs) + i, d);
 		if(__builtin_expect(i + 1 == W, 0)){
-			h = _mm_subs_epi8(h, GapQP);
+			h = mm_subs_epi8(h, GapQP);
 		} else {
-			h = _mm_load_si128(((__m128i*)qprof->buffer) + (rbeg + i + 1) * 4 + base);
+			h = mm_load(((xint*)qprof->buffer) + (rbeg + i + 1) * 4 + base);
 		}
 	}
 	// revise the first striped block of u
-	v = _mm_subs_epi8(h, u);
-	v = _mm_slli_si128(v, 1);
-	u = _mm_load_si128((__m128i*)us[1][0]);
-	u = _mm_subs_epi8(u, v);
-	_mm_store_si128((__m128i*)us[1][0], u);
+	v = mm_subs_epi8(h, u);
+	v = mm_slli(v, 1);
+	u = mm_load((xint*)us[1][0]);
+	u = mm_subs_epi8(u, v);
+	mm_store((xint*)us[1][0], u);
 	// shift score to fit EPI8
 	rh = ph + us[1][0][0];
 	us[1][0][0] = 0;
 	return rh;
 }
 
-// array Wscores records absolute values of the first and last W cells in natural order
 static inline u4i banded_striped_epi8_seqalign_row_max(b1i **us, u4i W, int shift, int *wscores[2], int *max_score){
-	__m128i h, c, m, Max[4], max[2], Scr[4], scr[2], Idx[4], num[2], ONE;
+	xint h, c, m, Max[4], max[2], Scr[4], scr[2], Idx[4], num[2], ONE;
 	u4i k, i, j, x, y, WX;
-	int score, tmp, ary[16];
+	int score, tmp, ary[WORDSIZE];
 	// find max
 	for(i=0;i<4;i++){
-		Idx[i] = Scr[i] = Max[i] = _mm_set1_epi32(0);
+		Idx[i] = Scr[i] = Max[i] = mm_set1_epi32(0);
 	}
-	ONE = _mm_set1_epi16(1);
-	WX = roundup_times(W, 4) / 4;
+	ONE = mm_set1_epi16(1);
+	WX = roundup_times(W, WORDSIZE / 4) / (WORDSIZE / 4);
 	if(wscores[0] == NULL){
-		wscores[0] = calloc(WX * 4, sizeof(int));
-	} else {
-		//memset(wscores[0], 0, WX * 4 * sizeof(int));
+		wscores[0] = calloc(WX * WORDSIZE / 4, sizeof(int));
 	}
 	if(wscores[1] == NULL){
-		wscores[1] = calloc(WX * 4, sizeof(int));
-	} else {
-		//memset(wscores[1], 0, WX * 4 * sizeof(int));
+		wscores[1] = calloc(WX * WORDSIZE / 4, sizeof(int));
 	}
 	for(k=0;k<W;k+=256){
 		x = k;
 		y = num_min(x + 256, W);
 		for(i=0;i<2;i++){
-			scr[i] = max[i] = _mm_set1_epi16(0);
+			scr[i] = max[i] = mm_set1_epi16(0);
 		}
 		for(i=x;i<y;i++){
-			h = _mm_load_si128((__m128i*)us[i]);
+			h = mm_load((xint*)us[i]);
 			{
-				m = _mm_cvtepi8_epi16(h);
-				h = _mm_srli_si128(h, 8);
-				scr[0] = _mm_adds_epi16(scr[0], m);
-				max[0] = _mm_max_epi16(max[0], scr[0]);
-				m = _mm_cvtepi8_epi16(h);
-				scr[1] = _mm_adds_epi16(scr[1], m);
-				max[1] = _mm_max_epi16(max[1], scr[1]);
+				m = mm_cvtepi8lo_epi16(h);
+				scr[0] = mm_adds_epi16(scr[0], m);
+				max[0] = mm_max_epi16(max[0], scr[0]);
+				m = mm_cvtepi8hi_epi16(h);
+				scr[1] = mm_adds_epi16(scr[1], m);
+				max[1] = mm_max_epi16(max[1], scr[1]);
 			}
-			wscores[0][i] = (b2i)_mm_extract_epi16(scr[0], 0);
-			wscores[1][i] = (b2i)_mm_extract_epi16(scr[1], 7);
+			wscores[0][i] = (b2i)mm_extract_epi16(scr[0], 0);
+			wscores[1][i] = (b2i)mm_extract_epi16(scr[1], WORDSIZE / 2 - 1);
 		}
-		num[0] = _mm_set1_epi32(_mm_extract_epi32(Scr[0], 0));
-		num[1] = _mm_set1_epi32(_mm_extract_epi32(Scr[3], 3));
-		for(i=x;i<y;i+=4){
-			h = _mm_load_si128((__m128i*)(wscores[0] + i));
-			h = _mm_add_epi32(h, num[0]);
-			_mm_store_si128((__m128i*)(wscores[0] + i), h);
-			h = _mm_load_si128((__m128i*)(wscores[1] + i));
-			h = _mm_add_epi32(h, num[1]);
-			_mm_store_si128((__m128i*)(wscores[1] + i), h);
+		num[0] = mm_set1_epi32(mm_extract_epi32(Scr[0], 0));
+		num[1] = mm_set1_epi32(mm_extract_epi32(Scr[3], WORDSIZE / 4 - 1));
+		for(i=x;i<y;i+=WORDSIZE/4){
+			h = mm_load((xint*)(wscores[0] + i));
+			h = mm_add_epi32(h, num[0]);
+			mm_store((xint*)(wscores[0] + i), h);
+			h = mm_load((xint*)(wscores[1] + i));
+			h = mm_add_epi32(h, num[1]);
+			mm_store((xint*)(wscores[1] + i), h);
 		}
-		h = _mm_set1_epi32(k);
+		h = mm_set1_epi32(k);
 		for(i=0;i<4;i++){
 			j = i / 2;
 			// value of max score
-			m = _mm_cvtepi16_epi32(max[j]);
-			max[j] = _mm_srli_si128(max[j], 8);
-			m = _mm_add_epi32(m, Scr[i]);
-			c = _mm_cmpgt_epi32(m, Max[i]);
-			Max[i] = _mm_blendv_epi8(Max[i], m, c);
-			Idx[i] = _mm_blendv_epi8(Idx[i], h, c);
+			m = mm_cvtepi16lo_epi32(max[j]);
+			max[j] = mm_srli(max[j], WORDSIZE / 2);
+			m = mm_add_epi32(m, Scr[i]);
+			c = mm_cmpgt_epi32(m, Max[i]);
+			Max[i] = mm_blendv_epi8(Max[i], m, c);
+			Idx[i] = mm_blendv_epi8(Idx[i], h, c);
 			// add scores
-			m = _mm_cvtepi16_epi32(scr[j]);
-			scr[j] = _mm_srli_si128(scr[j], 8);
-			Scr[i] = _mm_add_epi32(Scr[i], m);
+			m = mm_cvtepi16lo_epi32(scr[j]);
+			Scr[i] = mm_add_epi32(Scr[i], m);
+			scr[j] = mm_srli(scr[j], WORDSIZE / 2);
 		}
 	}
-	_mm_store_si128(((__m128i*)ary) + 0, Scr[0]);
-	_mm_store_si128(((__m128i*)ary) + 1, Scr[1]);
-	_mm_store_si128(((__m128i*)ary) + 2, Scr[2]);
-	_mm_store_si128(((__m128i*)ary) + 3, Scr[3]);
+	mm_store(((xint*)ary) + 0, Scr[0]);
+	mm_store(((xint*)ary) + 1, Scr[1]);
+	mm_store(((xint*)ary) + 2, Scr[2]);
+	mm_store(((xint*)ary) + 3, Scr[3]);
 	score = shift;
-	for(i=0;i<16;i++){
+	for(i=0;i<WORDSIZE;i++){
 		tmp = ary[i];
 		ary[i] = score;
 		score += tmp;
 	}
-	num[0] = _mm_set1_epi32(ary[0]);
-	num[1] = _mm_set1_epi32(ary[15]);
+	num[0] = mm_set1_epi32(ary[0]);
+	num[1] = mm_set1_epi32(ary[WORDSIZE - 1]);
 	for(i=0;i<WX;i++){
-		h = _mm_load_si128(((__m128i*)wscores[0]) + i);
-		h = _mm_add_epi32(h, num[0]);
-		_mm_store_si128(((__m128i*)wscores[0]) + i, h);
-		h = _mm_load_si128(((__m128i*)wscores[1]) + i);
-		h = _mm_add_epi32(h, num[1]);
-		_mm_store_si128(((__m128i*)wscores[1]) + i, h);
+		h = mm_load(((xint*)wscores[0]) + i);
+		h = mm_add_epi32(h, num[0]);
+		mm_store(((xint*)wscores[0]) + i, h);
+		h = mm_load(((xint*)wscores[1]) + i);
+		h = mm_add_epi32(h, num[1]);
+		mm_store(((xint*)wscores[1]) + i, h);
 	}
-	Scr[0] = _mm_load_si128(((__m128i*)ary) + 0);
-	Scr[1] = _mm_load_si128(((__m128i*)ary) + 1);
-	Scr[2] = _mm_load_si128(((__m128i*)ary) + 2);
-	Scr[3] = _mm_load_si128(((__m128i*)ary) + 3);
-	Max[0] = _mm_add_epi32(Scr[0], Max[0]);
-	Max[1] = _mm_add_epi32(Scr[1], Max[1]);
-	Max[2] = _mm_add_epi32(Scr[2], Max[2]);
-	Max[3] = _mm_add_epi32(Scr[3], Max[3]);
-	_mm_store_si128(((__m128i*)ary) + 0, Max[0]);
-	_mm_store_si128(((__m128i*)ary) + 1, Max[1]);
-	_mm_store_si128(((__m128i*)ary) + 2, Max[2]);
-	_mm_store_si128(((__m128i*)ary) + 3, Max[3]);
+	Max[0] = mm_add_epi32(mm_load(((xint*)ary) + 0), Max[0]);
+	Max[1] = mm_add_epi32(mm_load(((xint*)ary) + 1), Max[1]);
+	Max[2] = mm_add_epi32(mm_load(((xint*)ary) + 2), Max[2]);
+	Max[3] = mm_add_epi32(mm_load(((xint*)ary) + 3), Max[3]);
+	mm_store(((xint*)ary) + 0, Max[0]);
+	mm_store(((xint*)ary) + 1, Max[1]);
+	mm_store(((xint*)ary) + 2, Max[2]);
+	mm_store(((xint*)ary) + 3, Max[3]);
 	x = 0;
-	for(i=1;i<16;i++){
+	for(i=1;i<WORDSIZE;i++){
 		if(ary[i] > ary[x]){
 			x = i;
 		}
 	}
 	*max_score = ary[x];
-	_mm_store_si128(((__m128i*)ary) + 0, Idx[x / 4]);
-	y = ary[x % 4];
+	mm_store(((xint*)ary) + 0, Idx[x / (WORDSIZE / 4)]);
+	y = ary[x % (WORDSIZE / 4)];
 	// find the index of max score in <= 256 cells
 	j = num_min(y + 256, W);
 	tmp = score = us[y][x];
@@ -846,47 +849,47 @@ static inline u4i banded_striped_epi8_seqalign_row_max(b1i **us, u4i W, int shif
 			k = i;
 		}
 	}
-	return x * W + k; // convert stripped into normal coordinate
+	return x * W + k; // convert striped into normal coordinate
 }
 
 static inline void banded_striped_epi8_seqalign_set_query_prof(BaseBank *seqs, u8i qoff, u4i qlen, b1v *qprof, u4i bandwidth, b1i mtx[16]){
 	b1i *qp;
 	u4i xlen, x, pos, i, j, W, b;
-	W = bandwidth / 16;
+	W = bandwidth / WORDSIZE;
 	xlen = num_max(qlen, bandwidth); // In case of bandwidth > qlen
-	clear_and_encap_b1v(qprof, ((xlen + 1) * 4) * 16);
+	clear_and_encap_b1v(qprof, ((xlen + 1) * 4) * WORDSIZE);
 	for(x=0;x<=xlen;x++){ // leave the last block all SEQALIGN_SCORE_EPI8_MIN for accessing [W]
-		qp = qprof->buffer + x * 4 * 16;
-		for(j=0;j<16;j++){
+		qp = qprof->buffer + x * 4 * WORDSIZE;
+		for(j=0;j<WORDSIZE;j++){
 			pos = x + j * W;
 			if(pos < qlen){
 				b = get_basebank(seqs, qoff + pos);
 				b *= 4;
 				for(i=0;i<4;i++){
-					qp[i * 16 + j] = mtx[b + i];
+					qp[i * WORDSIZE + j] = mtx[b + i];
 				}
 			} else {
 				for(i=0;i<4;i++){
-					qp[i * 16 + j] = SEQALIGN_SCORE_EPI8_MIN;
+					qp[i * WORDSIZE + j] = SEQALIGN_SCORE_EPI8_MIN;
 				}
 			}
 		}
 	}
 }
 
-#define banded_striped_epi8_seqalign_get_rd_query_prof(qprof, pos, base) (((base) < 4)? (qprof)->buffer + ((pos) * 4 + base) * 16 : (qprof)->buffer - 16)
+#define banded_striped_epi8_seqalign_get_rd_query_prof(qprof, pos, base) (((base) < 4)? (qprof)->buffer + ((pos) * 4 + base) * WORDSIZE : (qprof)->buffer - WORDSIZE)
 
 static inline void banded_striped_epi8_seqalign_row_print(FILE *out, BaseBank *seqs, u4i tidx, u4i tpos, u1i tbase, u4i bandwidth, u4i mov, u8i qoff, u4i rbeg, u4i rmax, int max_score, int shift, b1i **us, b1i *bs, int wl, int wr, int detail){
 	u4i i, x, y, W;
 	int score;
-	W = bandwidth / 16;
+	W = bandwidth / WORDSIZE;
 	fprintf(out, "ROW[%d][%d][%c]\tMOV=%d\tBAND=%d,%d\tMAX=%d(%d),%d\tSHIFT=%d\t\tWLR=%d,%d", tidx, tpos, bit_base_table[tbase], mov, rbeg, rbeg + bandwidth, rbeg + rmax, rmax, max_score, shift, wl, wr);
 	if(detail){
 		score = shift;
 		for(i=0;i<bandwidth;i++){
 			x = i % W;
 			y = i / W;
-			fprintf(out, "\t%d:%c%d:%d", i + rbeg, bit_base_table[get_basebank(seqs, qoff + rbeg + i)], score + us[x][y], bs[x * 16 + y] & 0x07);
+			fprintf(out, "\t%d:%c%d:%d", i + rbeg, bit_base_table[get_basebank(seqs, qoff + rbeg + i)], score + us[x][y], bs[x * WORDSIZE + y] & 0x07);
 			score += us[x][y];
 		}
 	}
@@ -894,17 +897,18 @@ static inline void banded_striped_epi8_seqalign_row_print(FILE *out, BaseBank *s
 }
 
 static inline int array_epi32_sum(int *rs, int n){
-	__m128i v, s;
-	int i, m, ary[4], sum;
-	s = _mm_set1_epi32(0);
-	m = n / 4;
+	xint v, s;
+	int i, m, ary[WORDSIZE / 4], sum;
+	s = mm_set1_epi32(0);
+	m = n / (WORDSIZE / 4);
 	for(i=0;i<m;i++){
-		v = _mm_load_si128(((__m128i*)rs) + i);
-		s = _mm_add_epi32(s, v);
+		v = mm_load(((xint*)rs) + i);
+		s = mm_add_epi32(s, v);
 	}
-	_mm_store_si128((__m128i*)ary, s);
-	sum = ary[0] + ary[1] + ary[2] + ary[3];
-	for(i=m*4;i<n;i++){
+	mm_store((xint*)ary, s);
+	sum = 0;
+	for(i=0;i<WORDSIZE/4;i++) sum += ary[i];
+	for(i=m*(WORDSIZE/4);i<n;i++){
 		sum += rs[i];
 	}
 	return sum;
@@ -923,7 +927,7 @@ static inline void banded_striped_epi8_seqalign_piecex_row_verify(int rbeg, int 
 		t = us[0][0][0] + gape1;
 	}
 	f = g = SEQALIGN_SCORE_MIN;
-	h0 = (rh - ph) + qprof->buffer[((rbeg + 0) * 4 + tbase) * 16];
+	h0 = (rh - ph) + qprof->buffer[((rbeg + 0) * 4 + tbase) * WORDSIZE];
 	if(h0 >= t){
 		if(h0 > SEQALIGN_SCORE_EPI8_MAX) h0 = SEQALIGN_SCORE_EPI8_MAX;
 	} else {
@@ -932,7 +936,7 @@ static inline void banded_striped_epi8_seqalign_piecex_row_verify(int rbeg, int 
 	s1 = ph;
 	s2 = hh;
 	//fprintf(stdout, " -- %s -- %s -- piecewise=%d rbeg=%d\tph=%d\trh=%d\thh=%d\n", __FUNCTION__, __FILE__, piecewise, rbeg, ph, rh, hh); fflush(stdout);
-	for(i=0;i<W*16;i++){
+	for(i=0;i<W*WORDSIZE;i++){
 		x = i % W;
 		y = i / W;
 		s2 += us[1][x][y];
@@ -1058,7 +1062,7 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(Ba
 	banded_striped_epi8_seqalign_piecex_backtrace_func  backtrace;
 	seqalign_result_t rs;
 	b1i **us[2], **es[2], **qs[2], *bs;
-	__m128i ZERO, MIN;
+	xint ZERO, MIN;
 	u4i i, k, W, rbeg, rmax, mov;
 	int piecewise, smax, lst_score, score, ph, rh, hh, wl, wr, wt, *wscores[2];
 	u1i tbase;
@@ -1079,8 +1083,8 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(Ba
 		row_mov = banded_striped_epi8_seqalign_piece0_row_mov;
 		row_cal = banded_striped_epi8_seqalign_piece0_row_cal;
 	}
-	bandwidth = roundup_times(bandwidth, 16);
-	W = bandwidth / 16;
+	bandwidth = roundup_times(bandwidth, WORDSIZE);
+	W = bandwidth / WORDSIZE;
 	if(verbose){
 		fprintf(stdout, "[%d,%d][%d,%d] PIECEWISE=%d\tW=%d\n", gapo1, gape1, gapo2, gape2, piecewise, W);
 	}
@@ -1105,36 +1109,36 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(Ba
 		qs[0] = qs[1] = NULL;
 	}
 	i = 0;
-	for(k=0;k<W;k++) us[1][k] = rows->buffer + 16 * k + i * bandwidth;
+	for(k=0;k<W;k++) us[1][k] = rows->buffer + WORDSIZE * k + i * bandwidth;
 	i ++;
-	for(k=0;k<W;k++) us[0][k] = rows->buffer + 16 * k + i * bandwidth;
+	for(k=0;k<W;k++) us[0][k] = rows->buffer + WORDSIZE * k + i * bandwidth;
 	i ++;
 	if(piecewise){
-		for(k=0;k<W;k++) es[1][k] = rows->buffer + 16 * k + i * bandwidth;
+		for(k=0;k<W;k++) es[1][k] = rows->buffer + WORDSIZE * k + i * bandwidth;
 		i ++;
-		for(k=0;k<W;k++) es[0][k] = rows->buffer + 16 * k + i * bandwidth;
+		for(k=0;k<W;k++) es[0][k] = rows->buffer + WORDSIZE * k + i * bandwidth;
 		i ++;
 	}
 	if(piecewise == 2){
-		for(k=0;k<W;k++) qs[1][k] = rows->buffer + 16 * k + i * bandwidth;
+		for(k=0;k<W;k++) qs[1][k] = rows->buffer + WORDSIZE * k + i * bandwidth;
 		i ++;
-		for(k=0;k<W;k++) qs[0][k] = rows->buffer + 16 * k + i * bandwidth;
+		for(k=0;k<W;k++) qs[0][k] = rows->buffer + WORDSIZE * k + i * bandwidth;
 		i ++;
 	}
 	bs = btds->buffer;
 	wscores[0] = calloc(roundup_times(W, 4), sizeof(int));
 	wscores[1] = calloc(roundup_times(W, 4), sizeof(int));
 	// overlap alignment
-	ZERO = _mm_set1_epi8(0);
-	MIN = _mm_set1_epi8(SEQALIGN_SCORE_EPI8_MIN);
-	for(k=0;k<W;k++) _mm_store_si128((__m128i*)us[1][k], ZERO);
+	ZERO = mm_set1_epi8(0);
+	MIN = mm_set1_epi8(SEQALIGN_SCORE_EPI8_MIN);
+	for(k=0;k<W;k++) mm_store((xint*)us[1][k], ZERO);
 	if(piecewise){
-		for(k=0;k<W;k++) _mm_store_si128((__m128i*)es[1][k], MIN);
+		for(k=0;k<W;k++) mm_store((xint*)es[1][k], MIN);
 	}
 	if(piecewise == 2){
-		for(k=0;k<W;k++) _mm_store_si128((__m128i*)qs[1][k], MIN);
+		for(k=0;k<W;k++) mm_store((xint*)qs[1][k], MIN);
 	}
-	for(k=0;k<W;k++) _mm_store_si128(((__m128i*)bs) + k, ZERO);
+	for(k=0;k<W;k++) mm_store(((xint*)bs) + k, ZERO);
 	memset(&rs, 0, sizeof(seqalign_result_t));
 	rs.score = SEQALIGN_SCORE_MIN;
 	rbeg = rmax = 0;
@@ -1166,7 +1170,7 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(Ba
 		if(verbose){
 			banded_striped_epi8_seqalign_row_print(stdout, seqs, 1, i, tbase, bandwidth, mov, qoff, rbeg, rmax, lst_score, hh, us[1], bs, wl, wr, verbose > 1);
 		}
-		if(i < 4 * W){
+		if(i < (WORDSIZE / 2) * W){
 			mov = 0;
 		} else if(wl + wt < wr){
 			mov = 2;
@@ -1178,7 +1182,7 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(Ba
 		bs += bandwidth;
 		push_u4v(begs, rbeg);
 		if(rbeg + bandwidth >= qlen){
-			score = wscores[1][qlen - 1 - rbeg - 15 * W];
+			score = wscores[1][qlen - 1 - rbeg - (WORDSIZE - 1) * W];
 			if(score > rs.score){
 				rs.score = score;
 				rs.qe = qlen - 1;

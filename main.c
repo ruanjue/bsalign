@@ -11,7 +11,8 @@ int usage(){
 	"Usage: bsalign [options]\n"
 	"options:\n"
 	" -h          Show this document\n"
-	" -W <int>    Bandwidth, 0: full band, [0]\n"
+	" -W <int>    Bandwidth, 0: full length of query [0]\n"
+	"             set it to a small value if the begins of two reads are nearly aligned\n"
 	" -M <int>    Score for match, [2]\n"
 	" -X <int>    Penalty for mismatch, [6]\n"
 	" -O <int>    Penalty for gap open, [3]\n"
@@ -66,9 +67,9 @@ int main(int argc, char **argv){
 	{
 		b1v *qprof, *rows, *btds;
 		banded_striped_epi8_seqalign_set_score_matrix(mtx, mat, mis);
-		qprof = init_b1v(1024);
-		rows  = init_b1v(1024);
-		btds  = init_b1v(1024);
+		qprof = adv_init_b1v(1024, 0, 32, 32);
+		rows  = adv_init_b1v(1024, 0, 32, 0);
+		btds  = adv_init_b1v(1024, 0, 32, 0);
 		while(readseq_filereader(fr, seq)){
 			push_seqbank(seqs, seq->tag->string, seq->tag->size, seq->seq->string, seq->seq->size);
 			if(seqs->nseq == 2){
