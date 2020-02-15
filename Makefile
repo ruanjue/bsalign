@@ -8,10 +8,16 @@ ifeq (0, ${MAKELEVEL})
 TIMESTAMP=$(shell date)
 endif
 
-ifeq (1, ${DEBUG})
-CFLAGS=-g3 -W -Wall -Wno-unused-but-set-variable -O0 -DDEBUG=1 -DVERSION="$(VERSION)" -DRELEASE="$(RELEASE)" -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -mpopcnt -msse4.2
+ifeq (1, ${AVX2})
+SIMD_FLAGS=-mavx2 -mavx
 else
-CFLAGS=-g3 -W -Wall -Wno-unused-but-set-variable -O4 -DVERSION="$(VERSION)" -DRELEASE="$(RELEASE)" -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -mpopcnt -msse4.2
+SIMD_FLAGS=-msse4.2
+endif
+
+ifeq (1, ${DEBUG})
+CFLAGS=-g3 -W -Wall -Wno-unused-but-set-variable -O0 -DDEBUG=1 -DVERSION="$(VERSION)" -DRELEASE="$(RELEASE)" -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -mpopcnt $(SIMD_FLAGS)
+else
+CFLAGS=-g3 -W -Wall -Wno-unused-but-set-variable -O4 -DVERSION="$(VERSION)" -DRELEASE="$(RELEASE)" -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -mpopcnt $(SIMD_FLAGS)
 endif
 
 GLIBS=-lm -lrt -lpthread -lz
