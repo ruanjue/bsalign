@@ -19,6 +19,7 @@ int usage(){
 	" -E <int>    Penalty for gap extension, [2]\n"
 	" -Q <int>    Penalty for gap2 open, [0]\n"
 	" -P <int>    Penalty for gap2 extension, [0]\n"
+	" -R <int>    repeat times (for benchmarking) [1]\n"
 	" -v          Verbose\n"
 	" Gap-weighting functions\n"
 	" If P < E and Q + P > O + E, 2-piecewise affine gap cost\n"
@@ -39,11 +40,12 @@ int main(int argc, char **argv){
 	seqalign_result_t rs;
 	u4v *begs;
 	b1i mtx[16];
-	int c, _W, W, mat, mis, gapo1, gape1, gapo2, gape2, verbose;
+	int c, _W, W, mat, mis, gapo1, gape1, gapo2, gape2, repm, repn, verbose;
 	_W = 0;
 	mat = 2; mis = -6; gapo1 = -3; gape1 = -2; gapo2 = 0; gape2 = 0;
+	repm = 1;
 	verbose = 0;
-	while((c = getopt(argc, argv, "hvW:M:X:O:E:Q:P:")) != -1){
+	while((c = getopt(argc, argv, "hvW:M:X:O:E:Q:P:R:")) != -1){
 		switch(c){
 			case 'h': return usage();
 			case 'v': verbose ++; break;
@@ -54,6 +56,7 @@ int main(int argc, char **argv){
 			case 'E': gape1 = - atoi(optarg); break;
 			case 'Q': gapo2 = - atoi(optarg); break;
 			case 'P': gape2 = - atoi(optarg); break;
+			case 'R': repm = atoi(optarg); break;
 			default: return usage();
 		}
 	}
@@ -77,6 +80,10 @@ int main(int argc, char **argv){
 				else W = _W;
 				rs = banded_striped_epi8_seqalign_pairwise_overlap(seqs->rdseqs, seqs->rdoffs->buffer[0], seqs->rdlens->buffer[0], 
 					seqs->rdoffs->buffer[1], seqs->rdlens->buffer[1], qprof, rows, btds, begs, W, mtx, gapo1, gape1, gapo2, gape2, alnstr, verbose);
+				for(repn=1;repn<repm;repn++){ // for benchmarking
+					rs = banded_striped_epi8_seqalign_pairwise_overlap(seqs->rdseqs, seqs->rdoffs->buffer[0], seqs->rdlens->buffer[0], 
+						seqs->rdoffs->buffer[1], seqs->rdlens->buffer[1], qprof, rows, btds, begs, W, mtx, gapo1, gape1, gapo2, gape2, alnstr, 0);
+				}
 				fprintf(stdout, "%s\t%d\t+\t%d\t%d\t%s\t%d\t+\t%d\t%d\t", seqs->rdtags->buffer[0], seqs->rdlens->buffer[0], rs.qb, rs.qe,
 					seqs->rdtags->buffer[1], seqs->rdlens->buffer[1], rs.tb, rs.te);
 				fprintf(stdout, "%d\t%.3f\t%d\t%d\t%d\t%d\n", rs.score, 1.0 * rs.mat / (rs.mat + rs.mis + rs.ins + rs.del) ,rs.mat, rs.mis, rs.ins, rs.del);
