@@ -5,7 +5,6 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
-#include "sort.h"
 #include "mem_share.h"
 
 /**
@@ -482,10 +481,6 @@ static inline size_type locate_##list_type(list_type *list, e_type e, size_type 
 	}	\
 	return i;	\
 }	\
-	\
-define_quick_sort(sort_##list_type##_core, e_type, cmp_func);	\
-	\
-static inline void sort_##list_type(list_type *list){ sort_##list_type##_core(ref_##list_type(list, 0), count_##list_type(list), NULL); }
 
 #define define_list(name, e_type) define_list_core(name, e_type, u8i, 0xFFFFFU)
 

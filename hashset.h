@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include <math.h>
 #include "mem_share.h"
+#include "sort.h"
 #include "bitvec.h"
 
 static const uint64_t sys_prime_list[61] = {

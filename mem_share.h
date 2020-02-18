@@ -139,11 +139,12 @@ static inline void print_backtrace(FILE *out, int max_frame){
 }
 #endif
 
-static inline void num2bits(u8i num, char bits[64]){
+static inline void num2bits(u8i num, char bits[65]){
 	int i;
 	for(i=0;i<64;i++){
 		bits[i] = '0' + ((num >> (63 - i)) & 0x01);
 	}
+	bits[i] = 0;
 }
 
 static inline size_t roundup_power2(size_t v){
