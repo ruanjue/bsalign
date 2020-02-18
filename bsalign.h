@@ -2,13 +2,18 @@
 #define BAND_STRIPED_DNA_SEQ_ALIGNMENT_RJ_H
 
 /**
+ *
+ * bsalign.h
+ *
+ * Jue Ruan <ruanjue@gmail.com>
+ *
  * References:
  * Farrar, Michael. 2007. "Striped Smith-Waterman Speeds Database Searches Six Times over Other SIMD Implementations." Bioinformatics 23 (2): 156¨C61. https://doi.org/10.1093/bioinformatics/btl5
  * Suzuki, Hajime, and Masahiro Kasahara. 2017. "Acceleration of Nucleotide Semi-Global Alignment with Adaptive Banded Dynamic Programming" BioRxiv, September, 130633. https://doi.org/10.1101/13063
  * Suzuki, Hajime, and Masahiro Kasahara. 2018. "Introducing Difference Recurrence Relations for Faster Semi-Global Alignment of Long Sequences." BMC Bioinformatics 19 (Suppl 1). https://doi.org/10.1186/s12859-018-2018.
  * Li, Heng. 2018. "Minimap2: Pairwise Alignment for Nucleotide Sequences." Bioinformatics 34 (18): 3094¨C3100. https://doi.org/10.1093/bioinformatics/b
  *
- * My Algorithm = global/overlap alignment + striped vectorization + difference recurrence relation + adaptive banded + active F-loop
+ * My Algorithm = global/overlap alignment + striped vectorization + difference recurrence relation + adaptive banding + active F-loop
  * 
  * I compute the score matrix in the way of one row by one row, that is y always increases 1 in next call.
  * x is resorted into striped vector based on W and B.
@@ -78,9 +83,10 @@
  *
  */
 
+/*
+ * To use bsalign.h in your program, please copy bsalign.h, list.h and mem_share.h together
+ */
 
-#include "chararray.h"
-#include "dna.h"
 #include "list.h"
 #ifdef __AVX2__
 #include <immintrin.h>
@@ -89,6 +95,10 @@
 #include <smmintrin.h>
 #include <tmmintrin.h>
 #endif
+
+#define SEQALIGN_MODE_GLOBAL	0
+#define SEQALIGN_MODE_OVERLAP	1
+#define SEQALIGN_MODE_EXTEND	2
 
 #define SEQALIGN_BT_M	0
 #define SEQALIGN_BT_D1	1
@@ -178,11 +188,11 @@ typedef struct {
 	int score;
 	int qb, qe;
 	int tb, te;
-	int mat, mis, ins, del;
+	int mat, mis, ins, del, aln;
 } seqalign_result_t;
 
 /**
- * Basic function referings for global DNA sequence alignment, please their implementations within this file
+ * Basic function referings for global DNA sequence alignment, there are implementations in this file
  */
 
 #define banded_striped_epi8_pos2idx(bandwidth, pos) ((((pos) % (bandwidth >> WORDSHIFT)) << WORDSHIFT) + ((pos) / ((bandwidth) >> WORDSHIFT)))
@@ -190,36 +200,43 @@ typedef struct {
 static inline void banded_striped_epi8_seqalign_set_score_matrix(b1i matrix[16], b1i mat, b1i mis){ u4i i; for(i=0;i<16;i++) matrix[i] = ((i ^ (i >> 2)) & 0x3)? mis : mat; }
 
 // prepare query profile
-typedef void (*banded_striped_epi8_seqalign_set_query_prof_func)(BaseBank *seqs, u8i qoff, u4i qlen, b1v *qprof, u4i bandwidth, b1i score_matrix[16]);
+typedef void (*banded_striped_epi8_seqalign_set_query_prof_func)(u1i *qseq, u4i qlen, b1v *qprof, u4i bandwidth, b1i score_matrix[16]);
 
 // mov <= W
-// converting from [1] to [0]
+// converting from us[1] to us[0]
 // make the two row aligned
 // here, us, es, and qs are array of pointers, aims to facilitate the memory management for applications
 typedef void (*banded_striped_epi8_seqalign_piecex_row_mov_func)(b1i **us[2], b1i **es[2], b1i **qs[2], u4i W, u4i mov);
 
-// core func to update row scores, from [0] to [1]
+// core func to update row scores, from us[0] to us[1]
 // ph is the score of H(-1, y - 1)
 // rh is the revised score of H(-1, y - 1)
 // @return: score of H(-1, y), note that H(-1, y) is useful to restore all scores of row in row_max
 typedef int (*banded_striped_epi8_seqalign_piecex_row_cal_func)(u4i rbeg, u1i base, b1i **us[2], b1i **es[2], b1i **qs[2], b1i *bs, b1v *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, int ph, int rh);
 
-typedef void (*banded_striped_epi8_seqalign_piecex_row_verify_func)(int rbeg, int W, int ph, int rh, int hh, u1i base, b1i **us[2], b1i **es[2], b1i **qs[2], b1v *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2);
+typedef int (*banded_striped_epi8_seqalign_piecex_row_verify_func)(int rbeg, int W, int ph, int rh, int hh, u1i base, b1i **us[2], b1i **es[2], b1i **qs[2], b1v *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2);
 
 // find max score and return the real offset in band
 // wscores[0] store the first running block
 // wscores[1] store the last  running block
 typedef u4i (*banded_striped_epi8_seqalign_piecex_row_max_func)(b1i **us, u4i W, int hh, int *wscores[2], int *max_score);
 
+// wscores[0] store the first running block
+// wscores[1] store the last  running block
+typedef void (*banded_striped_epi8_seqalign_piecex_row_look_func)(b1i **us, u4i W, int hh, int *wscores[2]);
+
 // backtrace
 // rs->qe, rs->te and rs->score MUST be set before call this function
 // begs provides the band's offset of rows, it is continously suming of mov in banded_striped_epi8_seqalign_piecex_row_mov_func
 // piecewise = 0/1/2
-typedef void (*banded_striped_epi8_seqalign_piecex_backtrace_func)(BaseBank *seqs, u8i qoff, u4i qlen, u8i toff, u4i tlen, b1v *btds, u4v *begs, u4i bandwidth, int piecewise, seqalign_result_t *rs, String **alnstr);
+// @return length of alignment, used to allocate String to print readable alignment
+typedef u4i (*banded_striped_epi8_seqalign_piecex_backtrace_func)(u1i *qseq, u1i *tseq, b1v *btds, u4v *begs, u4i bandwidth, int piecewise, seqalign_result_t *rs, u4v *cigars);
+
+static inline u4i banded_striped_epi8_seqalign_cigar2alnstr(u1i *qseq, u1i *tseq, seqalign_result_t *rs, u4v *cigars, char *alnstr[3], u4i length);
 
 // implementation of overlap alignment for two sequences
 // bandwidth should be times of WORDSIZE
-static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(BaseBank *seqs, u8i qoff, u4i qlen, u8i toff, u4i tlen, b1v *qprof, b1v *rows, b1v *btds, u4v *begs, u4i bandwidth, b1i matrix[16], b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, String **alnstr, int verbose);
+static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *qprof, b1v *rows, b1v *btds, u4v *begs, u4v *cigars, int mode, u4i bandwidth, b1i matrix[16], b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, int verbose);
 
 
 static inline void banded_striped_epi8_seqalign_piece0_row_mov(b1i **us[2], b1i **es[2], b1i **qs[2], u4i W, u4i mov){
@@ -852,7 +869,80 @@ static inline u4i banded_striped_epi8_seqalign_row_max(b1i **us, u4i W, int shif
 	return x * W + k; // convert striped into normal coordinate
 }
 
-static inline void banded_striped_epi8_seqalign_set_query_prof(BaseBank *seqs, u8i qoff, u4i qlen, b1v *qprof, u4i bandwidth, b1i mtx[16]){
+static inline void banded_striped_epi8_seqalign_row_look(b1i **us, u4i W, int shift, int *wscores[2]){
+	xint h, m, Scr[4], scr[2], num[2];
+	u4i k, i, j, x, y, WX;
+	int score, tmp, ary[WORDSIZE];
+	// find max
+	for(i=0;i<4;i++){
+		Scr[i] = mm_set1_epi32(0);
+	}
+	WX = roundup_times(W, WORDSIZE / 4) / (WORDSIZE / 4);
+	if(wscores[0] == NULL){
+		wscores[0] = calloc(WX * WORDSIZE / 4, sizeof(int));
+	}
+	if(wscores[1] == NULL){
+		wscores[1] = calloc(WX * WORDSIZE / 4, sizeof(int));
+	}
+	for(k=0;k<W;k+=256){
+		x = k;
+		y = num_min(x + 256, W);
+		for(i=0;i<2;i++){
+			scr[i] = mm_set1_epi16(0);
+		}
+		for(i=x;i<y;i++){
+			h = mm_load((xint*)us[i]);
+			{
+				m = mm_cvtepi8lo_epi16(h);
+				scr[0] = mm_adds_epi16(scr[0], m);
+				m = mm_cvtepi8hi_epi16(h);
+				scr[1] = mm_adds_epi16(scr[1], m);
+			}
+			wscores[0][i] = (b2i)mm_extract_epi16(scr[0], 0);
+			wscores[1][i] = (b2i)mm_extract_epi16(scr[1], WORDSIZE / 2 - 1);
+		}
+		num[0] = mm_set1_epi32(mm_extract_epi32(Scr[0], 0));
+		num[1] = mm_set1_epi32(mm_extract_epi32(Scr[3], WORDSIZE / 4 - 1));
+		for(i=x;i<y;i+=WORDSIZE/4){
+			h = mm_load((xint*)(wscores[0] + i));
+			h = mm_add_epi32(h, num[0]);
+			mm_store((xint*)(wscores[0] + i), h);
+			h = mm_load((xint*)(wscores[1] + i));
+			h = mm_add_epi32(h, num[1]);
+			mm_store((xint*)(wscores[1] + i), h);
+		}
+		h = mm_set1_epi32(k);
+		for(i=0;i<4;i++){
+			j = i / 2;
+			// add scores
+			m = mm_cvtepi16lo_epi32(scr[j]);
+			Scr[i] = mm_add_epi32(Scr[i], m);
+			scr[j] = mm_srli(scr[j], WORDSIZE / 2);
+		}
+	}
+	mm_store(((xint*)ary) + 0, Scr[0]);
+	mm_store(((xint*)ary) + 1, Scr[1]);
+	mm_store(((xint*)ary) + 2, Scr[2]);
+	mm_store(((xint*)ary) + 3, Scr[3]);
+	score = shift;
+	for(i=0;i<WORDSIZE;i++){
+		tmp = ary[i];
+		ary[i] = score;
+		score += tmp;
+	}
+	num[0] = mm_set1_epi32(ary[0]);
+	num[1] = mm_set1_epi32(ary[WORDSIZE - 1]);
+	for(i=0;i<WX;i++){
+		h = mm_load(((xint*)wscores[0]) + i);
+		h = mm_add_epi32(h, num[0]);
+		mm_store(((xint*)wscores[0]) + i, h);
+		h = mm_load(((xint*)wscores[1]) + i);
+		h = mm_add_epi32(h, num[1]);
+		mm_store(((xint*)wscores[1]) + i, h);
+	}
+}
+
+static inline void banded_striped_epi8_seqalign_set_query_prof(u1i *qseq, u4i qlen, b1v *qprof, u4i bandwidth, b1i mtx[16]){
 	b1i *qp;
 	u4i xlen, x, pos, i, j, W, b;
 	W = bandwidth / WORDSIZE;
@@ -863,7 +953,7 @@ static inline void banded_striped_epi8_seqalign_set_query_prof(BaseBank *seqs, u
 		for(j=0;j<WORDSIZE;j++){
 			pos = x + j * W;
 			if(pos < qlen){
-				b = get_basebank(seqs, qoff + pos);
+				b = qseq[pos];
 				b *= 4;
 				for(i=0;i<4;i++){
 					qp[i * WORDSIZE + j] = mtx[b + i];
@@ -879,17 +969,17 @@ static inline void banded_striped_epi8_seqalign_set_query_prof(BaseBank *seqs, u
 
 #define banded_striped_epi8_seqalign_get_rd_query_prof(qprof, pos, base) (((base) < 4)? (qprof)->buffer + ((pos) * 4 + base) * WORDSIZE : (qprof)->buffer - WORDSIZE)
 
-static inline void banded_striped_epi8_seqalign_row_print(FILE *out, BaseBank *seqs, u4i tidx, u4i tpos, u1i tbase, u4i bandwidth, u4i mov, u8i qoff, u4i rbeg, u4i rmax, int max_score, int shift, b1i **us, b1i *bs, int wl, int wr, int detail){
+static inline void banded_striped_epi8_seqalign_row_print(FILE *out, u1i *qseq, u4i tidx, u4i tpos, u1i tbase, u4i bandwidth, u4i mov, u4i rbeg, u4i rmax, int max_score, int shift, b1i **us, b1i *bs, int wl, int wr, int detail){
 	u4i i, x, y, W;
 	int score;
 	W = bandwidth / WORDSIZE;
-	fprintf(out, "ROW[%d][%d][%c]\tMOV=%d\tBAND=%d,%d\tMAX=%d(%d),%d\tSHIFT=%d\t\tWLR=%d,%d", tidx, tpos, bit_base_table[tbase], mov, rbeg, rbeg + bandwidth, rbeg + rmax, rmax, max_score, shift, wl, wr);
+	fprintf(out, "ROW[%d][%d][%c]\tMOV=%d\tBAND=%d,%d\tMAX=%d(%d),%d\tSHIFT=%d\t\tWLR=%d,%d", tidx, tpos, "ACGTN-"[tbase], mov, rbeg, rbeg + bandwidth, rbeg + rmax, rmax, max_score, shift, wl, wr);
 	if(detail){
 		score = shift;
 		for(i=0;i<bandwidth;i++){
 			x = i % W;
 			y = i / W;
-			fprintf(out, "\t%d:%c%d:%d", i + rbeg, bit_base_table[get_basebank(seqs, qoff + rbeg + i)], score + us[x][y], bs[x * WORDSIZE + y] & 0x07);
+			fprintf(out, "\t%d:%c%d:%d:%d", i + rbeg, "ACGTN-"[qseq[rbeg + i]], score + us[x][y], us[x][y], bs[x * WORDSIZE + y] & 0x07);
 			score += us[x][y];
 		}
 	}
@@ -914,7 +1004,7 @@ static inline int array_epi32_sum(int *rs, int n){
 	return sum;
 }
 
-static inline void banded_striped_epi8_seqalign_piecex_row_verify(int rbeg, int W, int ph, int rh, int hh, u1i tbase, b1i **us[2], b1i **es[2], b1i **qs[2], b1v *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2){
+static inline int banded_striped_epi8_seqalign_piecex_row_verify(int rbeg, int W, int ph, int rh, int hh, u1i tbase, b1i **us[2], b1i **es[2], b1i **qs[2], b1v *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2){
 	int i, x, y, s1, s2, t, h, e, q, f, g, piecewise, h0;
 	if(gapo2 < gapo1 && gape2 > gape1 && gapo2 + gape2 < gapo1 + gape1){
 		piecewise = 2;
@@ -947,42 +1037,29 @@ static inline void banded_striped_epi8_seqalign_piecex_row_verify(int rbeg, int 
 		h = num_max(h, f);
 		h = num_max(h, g);
 		if(h != s2){
-			fprintf(stdout, " -- %c:%d i=%d h=%d(%d,%d,%d,%d) s2=%d s1=%d u0=%d u1=%d something wrong in %s -- %s:%d --\n", bit_base_table[tbase], h0, i, h, e, q, f, g, s2, s1, us[0][x][y], us[1][x][y], __FUNCTION__, __FILE__, __LINE__); fflush(stdout);
+			fprintf(stderr, " -- %c:%d i=%d h=%d(%d,%d,%d,%d) s2=%d s1=%d u0=%d u1=%d something wrong in %s -- %s:%d --\n", "ACGTN-"[tbase], h0, i, h, e, q, f, g, s2, s1, us[0][x][y], us[1][x][y], __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
 			//abort();
-			return;
+			return 1;
 		}
 		f = num_max(f, h + gapo1) + gape1;
 		g = (piecewise == 2)? num_max(g + gape2, h + gapo2 + gape2) : SEQALIGN_SCORE_MIN;
 		s1 += us[0][x][y];
 		h0 = banded_striped_epi8_seqalign_get_rd_query_prof(qprof, rbeg + i + 1, tbase)[0];
 	}
+	return 0;
 }
 
-static inline void banded_striped_epi8_seqalign_piecex_backtrace(BaseBank *seqs, u8i qoff, u4i qlen, u8i toff, u4i tlen, b1v *btds, u4v *begs, u4i bandwidth, int piecewise, seqalign_result_t *rs, String **alnstr){
-	u4i i, bt, btx;
-	u1i qbase, tbase;
+static inline u4i banded_striped_epi8_seqalign_piecex_backtrace(u1i *qseq, u1i *tseq, b1v *btds, u4v *begs, u4i bandwidth, int piecewise, seqalign_result_t *rs, u4v *cigars){
+	u4i bt, btx, cg;
+	u1i qbase, tbase, op;
 	rs->qb = rs->qe; rs->qe ++;
 	rs->tb = rs->te; rs->te ++;
-	rs->mat = rs->mis = rs->ins = rs->del = 0;
-	if(alnstr){
-		clear_string(alnstr[0]);
-		clear_string(alnstr[1]);
-		clear_string(alnstr[2]);
-		if(0){
-			for(i=qlen;(int)i>rs->qe;i--){
-				push_string(alnstr[0], bit_base_table[get_basebank(seqs, qoff + i - 1)]);
-				push_string(alnstr[1], '-');
-				push_string(alnstr[2], '-');
-			}
-			for(i=tlen;(int)i>rs->te;i--){
-				push_string(alnstr[0], '-');
-				push_string(alnstr[1], bit_base_table[get_basebank(seqs, toff + i - 1)]);
-				push_string(alnstr[2], '-');
-			}
-		}
-	}
+	rs->mat = rs->mis = rs->ins = rs->del = rs->aln = 0;
 	bt = 0;
+	cg = 0;
+	if(cigars) clear_u4v(cigars);
 	while(1){
+		rs->aln ++;
 		btx = get_b1v(btds, rs->tb * bandwidth + banded_striped_epi8_pos2idx(bandwidth, rs->qb - get_u4v(begs, rs->tb)));
 		if(piecewise == 0 || bt == SEQALIGN_BT_M){
 			bt = btx & 0x7;
@@ -990,75 +1067,109 @@ static inline void banded_striped_epi8_seqalign_piecex_backtrace(BaseBank *seqs,
 			bt = ((btx >> (bt + 2)) & 0x1)? bt : SEQALIGN_BT_M;
 		}
 		if(bt == SEQALIGN_BT_M){
-			qbase = get_basebank(seqs, qoff + rs->qb);
-			tbase = get_basebank(seqs, toff + rs->tb);
-			if(qbase == tbase){
-				rs->mat ++;
-				if(alnstr){
-					push_string(alnstr[0], bit_base_table[qbase]);
-					push_string(alnstr[1], bit_base_table[tbase]);
-					push_string(alnstr[2], '|');
+			if(qseq && tseq){
+				qbase = qseq[rs->qb];
+				tbase = tseq[rs->tb];
+				if(qbase == tbase){
+					rs->mat ++;
+					op = 7; // =
+				} else {
+					rs->mis ++;
+					op = 8; // X
 				}
 			} else {
-				rs->mis ++;
-				if(alnstr){
-					push_string(alnstr[0], bit_base_table[qbase]);
-					push_string(alnstr[1], bit_base_table[tbase]);
-					push_string(alnstr[2], '*');
-				}
+				rs->mat ++;
+				op = 0; // M
 			}
 			rs->qb --;
 			rs->tb --;
 			if(rs->qb < 0 || rs->tb < 0) break;
 		} else if(bt == SEQALIGN_BT_D1 || bt == SEQALIGN_BT_D2){
-			tbase = get_basebank(seqs, toff + rs->tb);
 			rs->del ++;
-			if(alnstr){
-				push_string(alnstr[0], '-');
-				push_string(alnstr[1], bit_base_table[tbase]);
-				push_string(alnstr[2], '-');
-			}
 			rs->tb --;
+			op = 2; // D
 			if(rs->tb < 0) break;
 		} else {
-			qbase = get_basebank(seqs, qoff + rs->qb);
 			rs->ins ++;
-			if(alnstr){
-				push_string(alnstr[0], bit_base_table[qbase]);
-				push_string(alnstr[1], '-');
-				push_string(alnstr[2], '-');
-			}
 			rs->qb --;
+			op = 1; // I
 			if(rs->qb < 0) break;
 		}
+		if(op == (cg & 0xf)){
+			cg += 0x10;
+		} else {
+			if(cg && cigars) push_u4v(cigars, cg);
+			cg = 0x10 | op;
+		}
+	}
+	if(op == (cg & 0xf)){
+		cg += 0x10;
+		if(cigars) push_u4v(cigars, cg);
+	} else {
+		if(cg && cigars) push_u4v(cigars, cg);
+		cg = 0x10 | op;
+		if(cigars) push_u4v(cigars, cg);
 	}
 	rs->qb ++;
 	rs->tb ++;
-	if(alnstr){
-		if(0){
-			for(i=rs->qb;i>0;i--){
-				push_string(alnstr[0], bit_base_table[get_basebank(seqs, qoff + i - 1)]);
-				push_string(alnstr[1], '-');
-				push_string(alnstr[2], '-');
-			}
-			for(i=rs->tb;i>0;i--){
-				push_string(alnstr[0], '-');
-				push_string(alnstr[1], bit_base_table[get_basebank(seqs, toff + i - 1)]);
-				push_string(alnstr[2], '-');
-			}
-		}
-		reverse_string(alnstr[0]);
-		reverse_string(alnstr[1]);
-		reverse_string(alnstr[2]);
-	}
+	if(cigars) reverse_u4v(cigars);
+	return rs->aln;
 }
 
-static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(BaseBank *seqs, u8i qoff, u4i qlen, u8i toff, u4i tlen, b1v *qprof, b1v *rows, b1v *btds, u4v *begs, u4i bandwidth, b1i *matrix, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, String **alnstr, int verbose){
+static inline u4i banded_striped_epi8_seqalign_cigar2alnstr(u1i *qseq, u1i *tseq, seqalign_result_t *rs, u4v *cigars, char *alnstr[3], u4i length){
+	u4i i, j, x, y, z, op, sz;
+	if(length == 0) return 0;
+	z = 0;
+	x = rs->qb;
+	y = rs->tb;
+	for(i=0;i<cigars->size;i++){
+		op = cigars->buffer[i] & 0xf;
+		sz = cigars->buffer[i] >> 4;
+		sz = num_min(sz, length - z);
+		switch(op){
+			case 0:
+			case 7:
+			case 8:
+			for(j=0;j<sz;j++){
+				alnstr[2][z] = (qseq[x] == tseq[y])? '|' : '*';
+				alnstr[0][z] = "ACGTN-"[qseq[x ++]];
+				alnstr[1][z] = "ACGTN-"[tseq[y ++]];
+				z ++;
+			}
+			break;
+			case 1:
+			case 4:
+			for(j=0;j<sz;j++){
+				alnstr[2][z] = '-';
+				alnstr[0][z] = "ACGTN-"[qseq[x ++]];
+				alnstr[1][z] = '-';
+				z ++;
+			}
+			break;
+			case 2:
+			case 3:
+			for(j=0;j<sz;j++){
+				alnstr[2][z] = '-';
+				alnstr[0][z] = '-';
+				alnstr[1][z] = "ACGTN-"[tseq[y ++]];
+				z ++;
+			}
+			if(z == length) break;
+		}
+	}
+	alnstr[0][z] = 0;
+	alnstr[1][z] = 0;
+	alnstr[2][z] = 0;
+	return z;
+}
+
+static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *qprof, b1v *rows, b1v *btds, u4v *begs, u4v *cigars, int mode, u4i bandwidth, b1i matrix[16], b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, int verbose){
 	banded_striped_epi8_seqalign_set_query_prof_func    set_qprof;
 	banded_striped_epi8_seqalign_piecex_row_mov_func    row_mov;
 	banded_striped_epi8_seqalign_piecex_row_cal_func    row_cal;
 	banded_striped_epi8_seqalign_piecex_row_verify_func row_verify;
 	banded_striped_epi8_seqalign_piecex_row_max_func    row_max;
+	banded_striped_epi8_seqalign_piecex_row_look_func   row_look;
 	banded_striped_epi8_seqalign_piecex_backtrace_func  backtrace;
 	seqalign_result_t rs;
 	b1i **us[2], **es[2], **qs[2], *bs;
@@ -1069,6 +1180,7 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(Ba
 	set_qprof  = banded_striped_epi8_seqalign_set_query_prof;
 	row_verify = banded_striped_epi8_seqalign_piecex_row_verify;
 	row_max    = banded_striped_epi8_seqalign_row_max;
+	row_look   = banded_striped_epi8_seqalign_row_look;
 	backtrace  = banded_striped_epi8_seqalign_piecex_backtrace;
 	if(gapo2 < gapo1 && gape2 > gape1 && gapo2 + gape2 < gapo1 + gape1){
 		piecewise = 2;
@@ -1090,7 +1202,7 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(Ba
 	}
 	smax = 0;
 	for(i=0;i<16;i++) smax = num_max(smax, num_abs(matrix[i]));
-	set_qprof(seqs, qoff, qlen, qprof, bandwidth, matrix);
+	set_qprof(qseq, qlen, qprof, bandwidth, matrix);
 	clear_and_encap_b1v(rows, bandwidth * (piecewise + 1) * 2);
 	clear_and_encap_b1v(btds, bandwidth * (tlen + 1));
 	clear_and_encap_u4v(begs, tlen);
@@ -1128,10 +1240,19 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(Ba
 	bs = btds->buffer;
 	wscores[0] = calloc(roundup_times(W, 4), sizeof(int));
 	wscores[1] = calloc(roundup_times(W, 4), sizeof(int));
-	// overlap alignment
 	ZERO = mm_set1_epi8(0);
 	MIN = mm_set1_epi8(SEQALIGN_SCORE_EPI8_MIN);
-	for(k=0;k<W;k++) mm_store((xint*)us[1][k], ZERO);
+	memset(&rs, 0, sizeof(seqalign_result_t));
+	rs.score = SEQALIGN_SCORE_MIN;
+	if(mode == SEQALIGN_MODE_GLOBAL || mode == SEQALIGN_MODE_EXTEND){
+		for(k=0;k<W;k++) mm_store((xint*)us[1][k], MIN);
+		us[1][0][0] = 0;
+	} else if(mode == SEQALIGN_MODE_OVERLAP){
+		for(k=0;k<W;k++) mm_store((xint*)us[1][k], ZERO);
+	} else {
+		fprintf(stderr, " -- Illegal mode %d in %s -- %s:%d --\n", mode, __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+		return rs;
+	}
 	if(piecewise){
 		for(k=0;k<W;k++) mm_store((xint*)es[1][k], MIN);
 	}
@@ -1139,36 +1260,41 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(Ba
 		for(k=0;k<W;k++) mm_store((xint*)qs[1][k], MIN);
 	}
 	for(k=0;k<W;k++) mm_store(((xint*)bs) + k, ZERO);
-	memset(&rs, 0, sizeof(seqalign_result_t));
-	rs.score = SEQALIGN_SCORE_MIN;
 	rbeg = rmax = 0;
 	mov = 0;
 	hh = 0;
 	lst_score = 0;
 	for(i=0;i<tlen;i++){
 		ph = hh;
-		tbase = get_basebank(seqs, toff + i);
+		tbase = tseq[i];
 		if(mov && rbeg + bandwidth < qlen){
 			mov = num_min(mov, num_max(0, Int(qlen) - Int(rbeg + bandwidth)));
 			rbeg += mov;
 			ph = wscores[0][mov - 1];
-			rh = ph + matrix[tbase * 4 + get_basebank(seqs, qoff + rbeg)]; // just guess
+			rh = ph + matrix[tbase * 4 + qseq[rbeg]]; // just guess
 		} else {
 			mov  = 0;
 			rh = rbeg? SEQALIGN_SCORE_MIN : 0; // overlap alignment mode
+			rh = (mode == SEQALIGN_MODE_OVERLAP && rbeg == 0)? 0 : SEQALIGN_SCORE_MIN;
 		}
 		row_mov(us, es, qs, W, mov); // mov and swap
 		hh = row_cal(rbeg, tbase, us, es, qs, bs, qprof, gapo1, gape1, gapo2, gape2, W, ph, rh);
 		if(verbose > 2){
 			row_verify(rbeg, W, ph, rh, hh, tbase, us, es, qs, qprof, gapo1, gape1, gapo2, gape2);
 		}
-		rmax = row_max(us[1], W, hh, wscores, &lst_score);
+		if(mode == SEQALIGN_MODE_GLOBAL && i + 1 < tlen && verbose == 0){
+			rmax = 0;
+			lst_score = SEQALIGN_SCORE_MIN;
+			row_look(us[1], W, hh, wscores);
+		} else {
+			rmax = row_max(us[1], W, hh, wscores, &lst_score);
+		}
 		// adaptive banded
 		wl = array_epi32_sum(wscores[0], W);
 		wr = array_epi32_sum(wscores[1], W);
 		wt = W * smax;
 		if(verbose){
-			banded_striped_epi8_seqalign_row_print(stdout, seqs, 1, i, tbase, bandwidth, mov, qoff, rbeg, rmax, lst_score, hh, us[1], bs, wl, wr, verbose > 1);
+			banded_striped_epi8_seqalign_row_print(stdout, qseq, 1, i, tbase, bandwidth, mov, rbeg, rmax, lst_score, hh, us[1], bs, wl, wr, verbose > 1);
 		}
 		if(i < (WORDSIZE / 2) * W){
 			mov = 0;
@@ -1181,12 +1307,14 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(Ba
 		}
 		bs += bandwidth;
 		push_u4v(begs, rbeg);
-		if(rbeg + bandwidth >= qlen){
-			score = wscores[1][qlen - 1 - rbeg - (WORDSIZE - 1) * W];
-			if(score > rs.score){
-				rs.score = score;
-				rs.qe = qlen - 1;
-				rs.te = i;
+		if(mode != SEQALIGN_MODE_GLOBAL){
+			if(rbeg + bandwidth >= qlen){
+				score = wscores[1][qlen - 1 - rbeg - (WORDSIZE - 1) * W];
+				if(score > rs.score){
+					rs.score = score;
+					rs.qe = qlen - 1;
+					rs.te = i;
+				}
 			}
 		}
 	}
@@ -1196,7 +1324,7 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise_overlap(Ba
 		rs.te = tlen - 1;
 	}
 	// backtrace
-	backtrace(seqs, qoff, qlen, toff, tlen, btds, begs, bandwidth, piecewise, &rs, alnstr);
+	backtrace(qseq, tseq, btds, begs, bandwidth, piecewise, &rs, cigars);
 	free(us[0]);
 	free(us[1]);
 	if(es[0]) free(es[0]);
