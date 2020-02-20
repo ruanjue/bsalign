@@ -71,17 +71,14 @@ int main(int argc, char **argv){
 	{
 		seqalign_result_t rs;
 		char *alnstr[3]; int strn;
-		u4v *begs, *cigars;
+		u4v *cigars;
 		u1v *qseq, *tseq;
-		b1v *qprof, *rows, *btds;
+		b1v *mempool;
 		b1i mtx[16];
 		banded_striped_epi8_seqalign_set_score_matrix(mtx, mat, mis);
+		mempool = init_b1v(1024);
 		qseq   = init_u1v(1024);
 		tseq   = init_u1v(1024);
-		qprof  = adv_init_b1v(1024, 0, 32, 32); // 32-bytes aligned memory, there is also 32 allocated bytes before qprof->buffer to support accessing buffer[-1]
-		rows   = adv_init_b1v(1024, 0, 32, 0);
-		btds   = adv_init_b1v(1024, 0, 32, 0);
-		begs   = init_u4v(64);
 		cigars = init_u4v(64);
 		alnstr[0] = NULL;
 		alnstr[1] = NULL;
@@ -99,9 +96,9 @@ int main(int argc, char **argv){
 				bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[1], seqs->rdlens->buffer[1], tseq->buffer);
 				tseq->size = seqs->rdlens->buffer[1];
 				for(repn=1;repn<repm;repn++){ // for benchmarking
-					rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, qprof, rows, btds, begs, cigars, mode, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
+					rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
 				}
-				rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, qprof, rows, btds, begs, cigars, mode, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
+				rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
 				if(strn < rs.aln){
 					strn = rs.aln;
 					alnstr[0] = realloc(alnstr[0], strn + 1);
@@ -117,10 +114,7 @@ int main(int argc, char **argv){
 		}
 		free_u1v(qseq);
 		free_u1v(tseq);
-		free_b1v(qprof);
-		free_b1v(rows);
-		free_b1v(btds);
-		free_u4v(begs);
+		free_b1v(mempool);
 		free_u4v(cigars);
 		if(strn){
 			free(alnstr[0]);
