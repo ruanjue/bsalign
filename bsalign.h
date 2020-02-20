@@ -111,12 +111,12 @@
 
 #define SEQALIGN_BT_M	0
 #define SEQALIGN_BT_D1	1
-#define SEQALIGN_BT_D2	2
-#define SEQALIGN_BT_I1	3
+#define SEQALIGN_BT_I1	2
+#define SEQALIGN_BT_D2	3
 #define SEQALIGN_BT_I2	4
 #define SEQALIGN_BT_DE1	8
-#define SEQALIGN_BT_DE2	16
-#define SEQALIGN_BT_IE1	32
+#define SEQALIGN_BT_IE1	16
+#define SEQALIGN_BT_DE2	32
 #define SEQALIGN_BT_IE2	64
 
 #define SEQALIGN_SCORE_EPI8_MIN	(-(MAX_B1 >> 1))
@@ -406,7 +406,7 @@ static inline void banded_striped_epi8_seqalign_piece2_row_mov(b1i *us[2], b1i *
 }
 
 static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], b1i *vs, b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, u4i mov, int ph, int rh){
-	xint h, e, f, u, v, m2[2], m4[4];
+	xint h, e, f, u, v, c, m2[2], m4[4];
 	xint I, D, GapE;
 	int ms[WORDSIZE];
 	b1i fs[WORDSIZE];
@@ -485,13 +485,13 @@ static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base
 	// will revise v after this loop
 	v = mm_set1_epi8(0);
 	h = mm_load(((xint*)qprof) + (rbeg + 0) * 4 + base);
-	h = mm_insert_epi8(h, h0, 0);
+	c = mm_insert_epi8(h, h0, 0);
 	u = mm_set1_epi8(0); // useless, but for compiler
 	for(i=0;i<W;i++){
 		u = mm_load(((xint*)us[0]) + i);
 		// max(e, h)
 		e = mm_adds_epi8(u, GapE);
-		h = mm_max_epi8(e, h);
+		h = mm_max_epi8(e, c);
 		// max(f, h)
 		h = mm_max_epi8(f, h);
 		// calculate u(x, y)
@@ -502,10 +502,7 @@ static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base
 		// calculate f(x, y)
 		f = mm_adds_epi8(h, GapE);
 		f = mm_subs_epi8(f, u);
-		if(__builtin_expect(i + 1 == W, 0)){
-		} else {
-			h = mm_load(((xint*)qprof) + (rbeg + i + 1) * 4 + base);
-		}
+		c = mm_load(((xint*)qprof) + (rbeg + i + 1) * 4 + base);
 	}
 	// revise the first striped block of u
 	v = mm_subs_epi8(h, u);
@@ -541,7 +538,7 @@ static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base
 }
 
 static inline int banded_striped_epi8_seqalign_piece1_row_cal(u4i rbeg, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], b1i *vs, b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, u4i mov, int ph, int rh){
-	xint h, e, f, u, v, m2[2], m4[4];
+	xint h, e, f, u, v, c, m2[2], m4[4];
 	xint I, IE, D, DE, GapOE, GapE;
 	int ms[WORDSIZE];
 	b1i fs[WORDSIZE];
@@ -626,16 +623,16 @@ static inline int banded_striped_epi8_seqalign_piece1_row_cal(u4i rbeg, u1i base
 	// don't use the h from last W - 1 to calculate v = h - u, because this h maybe updated when F-penetration
 	// will revise v after this loop
 	u = mm_set1_epi8(0); // useless, but for compiler
-	inline void banded_striped_epi8_seqalign_piece1_row_cal_sub2(){
+	inline void banded_striped_epi8_seqalign_piece1_row_cal_sub2(){ // for gprof
 		v = mm_set1_epi8(0);
 		h = mm_load(((xint*)qprof) + (rbeg + 0) * 4 + base);
-		h = mm_insert_epi8(h, h0, 0);
+		c = mm_insert_epi8(h, h0, 0);
 		for(i=0;__builtin_expect(i<W, 0);i++){
 			u = mm_load(((xint*)us[0]) + i);
 			e = mm_load(((xint*)es[0]) + i);
 			// max(e, h)
 			e = mm_adds_epi8(e, u);
-			h = mm_max_epi8(e, h);
+			h = mm_max_epi8(e, c);
 			// max(f, h)
 			h = mm_max_epi8(f, h);
 			// calculate u(x, y)
@@ -653,12 +650,9 @@ static inline int banded_striped_epi8_seqalign_piece1_row_cal(u4i rbeg, u1i base
 			h = mm_adds_epi8(h, GapOE);
 			f = mm_max_epi8(f, h);
 			f = mm_subs_epi8(f, u);
-			if(__builtin_expect(i + 1 == W, 0)){
-				h = mm_subs_epi8(h, GapOE);
-			} else {
-				h = mm_load(((xint*)qprof) + (rbeg + i + 1) * 4 + base);
-			}
+			c = mm_load(((xint*)qprof) + (rbeg + i + 1) * 4 + base);
 		}
+		h = mm_subs_epi8(h, GapOE);
 	}
 	banded_striped_epi8_seqalign_piece1_row_cal_sub2();
 	// revise the first striped block of u and v
@@ -695,7 +689,7 @@ static inline int banded_striped_epi8_seqalign_piece1_row_cal(u4i rbeg, u1i base
 }
 
 static inline int banded_striped_epi8_seqalign_piece2_row_cal(u4i rbeg, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], b1i *vs, b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, u4i mov, int ph, int rh){
-	xint h, e, q, f, g, u, v, m2[2], m4[4];
+	xint h, e, q, f, g, u, v, c, m2[2], m4[4];
 	xint I1, I2, IE1, IE2, D1, D2, DE1, DE2, GapOE, GapE, GapQP, GapP, GapOQ;
 	int ms[WORDSIZE];
 	b1i fs[WORDSIZE];
@@ -801,7 +795,7 @@ static inline int banded_striped_epi8_seqalign_piece2_row_cal(u4i rbeg, u1i base
 	// main loop
 	v = mm_set1_epi8(0);
 	h = mm_load(((xint*)qprof) + (rbeg + 0) * 4 + base);
-	h = mm_insert_epi8(h, h0, 0);
+	c = mm_insert_epi8(h, h0, 0);
 	u = mm_set1_epi8(0); // useless, but for compiler
 	for(i=0;i<W;i++){
 		u = mm_load(((xint*)us[0]) + i);
@@ -809,7 +803,7 @@ static inline int banded_striped_epi8_seqalign_piece2_row_cal(u4i rbeg, u1i base
 		q = mm_load(((xint*)qs[0]) + i);
 		// max(e, q, h)
 		e = mm_adds_epi8(e, u);
-		h = mm_max_epi8(e, h);
+		h = mm_max_epi8(e, c);
 		q = mm_adds_epi8(q, u);
 		h = mm_max_epi8(q, h);
 		// max(f, g, h)
@@ -838,12 +832,9 @@ static inline int banded_striped_epi8_seqalign_piece2_row_cal(u4i rbeg, u1i base
 		h = mm_subs_epi8(h, GapOQ); // (gapo1 + gape1 - gapo2 - gape2)
 		g = mm_max_epi8(g, h);
 		g = mm_subs_epi8(g, u);
-		if(__builtin_expect(i + 1 == W, 0)){
-			h = mm_subs_epi8(h, GapQP);
-		} else {
-			h = mm_load(((xint*)qprof) + (rbeg + i + 1) * 4 + base);
-		}
+		c = mm_load(((xint*)qprof) + (rbeg + i + 1) * 4 + base);
 	}
+	h = mm_subs_epi8(h, GapQP);
 	// revise the first striped block of u
 	v = mm_subs_epi8(h, u);
 	v = mm_slli(v, 1);
