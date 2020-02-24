@@ -1,6 +1,7 @@
-#include "bsalign.h"
 #include "dna.h"
 #include "filereader.h"
+#include "bsalign.h"
+//#include "bspoa.h"
 #include <stdlib.h>
 
 int usage(){
@@ -8,13 +9,13 @@ int usage(){
 	"Program: bsalign\n"
 	"Version: %s\n"
 	"Author : Jue Ruan <ruanjue@gmail.com>\n"
-	" bsalign read every pairs of two sequences from STDIN and perform banded-striped-SIMD-overlap alignment\n"
+	" bsalign reads sequences from STDIN and perform banded-striped-SIMD alignment\n"
 	"Usage: bsalign [options]\n"
 	"options:\n"
 	" -h          Show this document\n"
 	" -m <string> align mode: global, extend, overlap [overlap]\n"
+	//" -d <string> align method: pw (pairwise), poa (multiple) [pw]\n"
 	" -W <int>    Bandwidth, 0: full length of query [0]\n"
-	"             set it to a small value if the begins of two reads are nearly aligned\n"
 	" -M <int>    Score for match, [2]\n"
 	" -X <int>    Penalty for mismatch, [6]\n"
 	" -O <int>    Penalty for gap open, [3]\n"
@@ -38,8 +39,9 @@ int main(int argc, char **argv){
 	FileReader *fr;
 	SeqBank *seqs;
 	BioSequence *seq;
-	int c, mode, _W, W, mat, mis, gapo1, gape1, gapo2, gape2, repm, repn, verbose;
+	int c, mode, meth, _W, W, mat, mis, gapo1, gape1, gapo2, gape2, repm, repn, verbose;
 	mode = SEQALIGN_MODE_OVERLAP;
+	meth = 0; // pw, 1: poa
 	_W = 0;
 	mat = 2; mis = -6; gapo1 = -3; gape1 = -2; gapo2 = 0; gape2 = 0;
 	repm = 1;
@@ -52,6 +54,11 @@ int main(int argc, char **argv){
 			if(strcasecmp(optarg, "GLOBAL") == 0) mode = SEQALIGN_MODE_GLOBAL;
 			else if(strcasecmp(optarg, "EXTEND") == 0) mode = SEQALIGN_MODE_EXTEND;
 			else if(strcasecmp(optarg, "OVERLAP") == 0) mode = SEQALIGN_MODE_OVERLAP;
+			else return usage();
+			break;
+			case 'd':
+			if(strcasecmp(optarg, "PW") == 0) meth = 0;
+			else if(strcasecmp(optarg, "POA") == 0) meth = 1;
 			else return usage();
 			break;
 			case 'W': _W = atoi(optarg); break;
@@ -68,7 +75,7 @@ int main(int argc, char **argv){
 	fr = open_filereader(NULL, 0);
 	seqs = init_seqbank();
 	seq = init_biosequence();
-	{
+	if(meth == 0){
 		seqalign_result_t rs;
 		char *alnstr[3]; int strn;
 		u4v *cigars;
@@ -121,6 +128,7 @@ int main(int argc, char **argv){
 			free(alnstr[1]);
 			free(alnstr[2]);
 		}
+	} else {
 	}
 	free_biosequence(seq);
 	close_filereader(fr);
