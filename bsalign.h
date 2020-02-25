@@ -72,8 +72,6 @@
  *
  * 5, find max score within a row
  *  H(x, y) = H(x - 1, y) + u(x, y)
- *  By spliting it into pieces of 256 epi8, I can use epi16 instead of epi32 to speed up the sum and max
- *  Also, scores of the first and last running blocks can be stored during this procedure
  *
  * 6, adaptive band
  * if sum(H[0 .. W - 1]) > sum(H[15 * W .. 16 * W - 1])  row_offset = row_offset + 0 // in normal coordinate
@@ -150,7 +148,8 @@ typedef __m256i	xint;
 #define mm_cmpgt_epi32	_mm256_cmpgt_epi32
 #define mm_max_epi8	_mm256_max_epi8
 #define mm_max_epi16	_mm256_max_epi16
-#define mm_blendv_epi8	_mm256_blendv_epi8
+#define mm_max_epi32	_mm256_max_epi32
+#define mm_blendv	_mm256_blendv_epi8
 #define mm_cvtepi8lo_epi16(a)	_mm256_cvtepi8_epi16(_mm256_castsi256_si128(a))
 #define mm_cvtepi8hi_epi16(a)	_mm256_cvtepi8_epi16(_mm256_castsi256_si128(_mm256_srli_si256(a, 16)))
 #define mm_cvtepi16lo_epi32(a)	_mm256_cvtepi16_epi32(_mm256_castsi256_si128(a))
@@ -159,6 +158,8 @@ typedef __m256i	xint;
 #define mm_cvtepi8x1_epi32(a)	_mm256_cvtepi8_epi16(_mm256_castsi256_si128(_mm256_srli_si256(a, 8)))
 #define mm_cvtepi8x2_epi32(a)	_mm256_cvtepi8_epi16(_mm256_castsi256_si128(_mm256_srli_si256(a, 16)))
 #define mm_cvtepi8x3_epi32(a)	_mm256_cvtepi8_epi16(_mm256_castsi256_si128(_mm256_srli_si256(a, 24)))
+#define mm_packs_epi32	_mm256_packs_epi32
+#define mm_packs_epi16	_mm256_packs_epi16
 
 #else
 
@@ -189,7 +190,8 @@ typedef __m128i	xint;
 #define mm_cmpgt_epi32	_mm_cmpgt_epi32
 #define mm_max_epi8	_mm_max_epi8
 #define mm_max_epi16	_mm_max_epi16
-#define mm_blendv_epi8	_mm_blendv_epi8
+#define mm_max_epi32	_mm_max_epi32
+#define mm_blendv	_mm_blendv_epi8
 #define mm_cvtepi8lo_epi16(a)	_mm_cvtepi8_epi16(a)
 #define mm_cvtepi8hi_epi16(a)	_mm_cvtepi8_epi16(_mm_srli_si128(a, 8))
 #define mm_cvtepi16lo_epi32(a)	_mm_cvtepi16_epi32(a)
@@ -198,6 +200,8 @@ typedef __m128i	xint;
 #define mm_cvtepi8x1_epi32(a)	_mm_cvtepi8_epi32(_mm_srli_si128(a, 4))
 #define mm_cvtepi8x2_epi32(a)	_mm_cvtepi8_epi32(_mm_srli_si128(a, 8))
 #define mm_cvtepi8x3_epi32(a)	_mm_cvtepi8_epi32(_mm_srli_si128(a, 12))
+#define mm_packs_epi32	_mm_packs_epi32
+#define mm_packs_epi16	_mm_packs_epi16
 
 #endif
 
@@ -224,40 +228,41 @@ typedef void (*banded_striped_epi8_seqalign_set_query_prof_func)(u1i *qseq, u4i 
 
 // prepare the rows[-1]
 // mode = SEQALIGN_MODE_GLOBAL/SEQALIGN_MODE_EXTEND/SEQALIGN_MODE_OVERLAP
-typedef void (*banded_striped_epi8_seqalign_piecex_row_init_func)(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs, int *uincs, int *begs, int mode, u4i bandwidth, b1i max_nt_score, b1i min_nt_score, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2);
+// length of ubegs = WORDSIZE + 1
+typedef void (*banded_striped_epi8_seqalign_piecex_row_init_func)(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs, int *begs, int mode, u4i bandwidth, b1i max_nt_score, b1i min_nt_score, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2);
 
 // W = bandwidth / WORDSIZE, WORDSIZE = 16 (SSEx 128) or 32 (AVX2 512)
 // mov <= W
 // converting from us[1] to us[0]
 // make the two row aligned
 // ubegs is the absolute scores for the first striped block
-// uincs is the sum of u within each running block
-// this function will update ubegs and uincs
-typedef void (*banded_striped_epi8_seqalign_piecex_row_mov_func)(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs, int *uincs, u4i W, u4i mov, int piecewise);
+// this function will update ubegs
+typedef void (*banded_striped_epi8_seqalign_piecex_row_mov_func)(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs, u4i W, u4i mov, int piecewise);
 
-// us[0] and us[1] is two row-offset-aligned progenitors, merges us[0] into us[1]
+// us[0] and us[1] is two row-offset-aligned progenitors
+// cmp [0] and [1], merges into [0], records original in os[u, e, q], {us, es, qs, ubegs}
 // os stores array of the origins, 0 or 1, respectively for u, e, q
-// this function is used to merge two progenitors into current node in graph based alignment
-typedef void (*banded_striped_epi8_seqalign_piecex_row_merge_func)(b1i *us[2], b1i *es[2], b1i *qs[2], b1i *os[3], u4i W, int piecewise);
+// this function is used to merge multiple progenitors into current node in graph based alignment, program should call row_mov(i)+row_cal(i) before row_merge(1 .. n in pairwise)
+typedef void (*banded_striped_epi8_seqalign_piecex_row_merge_func)(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs[2], b1i *os[3], b1i osmarks[2], u4i W, int piecewise);
 
 // core func to update row scores, from us[0] to us[1]
 // ph is the score of H(-1, y - 1)
 // rh is the revised score of H(-1, y - 1)
-// uincs is used in F-penetration
+// ubegs[i] - ubegs[i-1] is used in F-penetration
 // ubegs will be updated
 // @return: score of H(-1, y), note that H(-1, y) is useful to restore all scores of row in row_max
-typedef int (*banded_striped_epi8_seqalign_piecex_row_cal_func)(u4i rbeg, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], b1i *bs, int *ubegs, int *uincs, b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, u4i mov, int ph, int rh);
+typedef int (*banded_striped_epi8_seqalign_piecex_row_cal_func)(u4i rbeg, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], b1i *bs, int *ubegs, b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, u4i mov, int ph, int rh);
 
 typedef int (*banded_striped_epi8_seqalign_piecex_row_verify_func)(int rbeg, int W, int ph, int rh, int hh, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2);
 
 // find max score and return the real offset in band
 // wscores[0] store the first running block
 // wscores[1] store the last  running block
-typedef u4i (*banded_striped_epi8_seqalign_piecex_row_max_func)(b1i *us, u4i W, int *ubegs, int *uincs, int *wscores[2], int *max_score);
+typedef u4i (*banded_striped_epi8_seqalign_piecex_row_max_func)(b1i *us, u4i W, int *ubegs, int *wscores[2], int *max_score);
 
 // wscores[0] store the first running block
 // wscores[1] store the last  running block
-typedef void (*banded_striped_epi8_seqalign_piecex_row_look_func)(b1i *us, u4i W, int *ubegs, int *uincs, int *wscores[2]);
+typedef void (*banded_striped_epi8_seqalign_piecex_row_look_func)(b1i *us, u4i W, int *ubegs, int *wscores[2]);
 
 // backtrace
 // rs->qe, rs->te and rs->score MUST be set before call this function
@@ -272,9 +277,10 @@ typedef u4i (*banded_striped_epi8_seqalign_cigar2alnstr_func)(u1i *qseq, u1i *ts
 // bandwidth should be times of WORDSIZE
 static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int mode, u4i bandwidth, b1i matrix[16], b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, int verbose);
 
-static void banded_striped_epi8_seqalign_piecex_row_init(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs, int *uincs, int *begs, int mode, u4i bandwidth, b1i max_nt, b1i min_nt, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2){
+static void banded_striped_epi8_seqalign_piecex_row_init(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs, int *begs, int mode, u4i bandwidth, b1i max_nt, b1i min_nt, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2){
 	xint ZERO, MIN, GAP;
 	u4i k, W, xp;
+	int s, t;
 	W = bandwidth / WORDSIZE;
 	ZERO = mm_set1_epi8(0);
 	MIN = mm_set1_epi8(SEQALIGN_SCORE_EPI8_MIN);
@@ -283,30 +289,32 @@ static void banded_striped_epi8_seqalign_piecex_row_init(b1i *us[2], b1i *es[2],
 			xp = (gapo2 - gapo1) / (gape1 - gape2);
 			GAP = mm_set1_epi8(gape2);
 			for(k=0;k<W;k++) mm_store(((xint*)us[1]) + k, GAP);
-			for(k=0;k<WORDSIZE;k++) uincs[k] = gape2 * W;
+			for(k=0;k<WORDSIZE;k++) ubegs[k] = gape2 * W;
 			us[1][0] = gapo1 + gape1 + min_nt - max_nt;
-			uincs[0] += us[1][0] - gape2;
+			ubegs[0] += us[1][0] - gape2;
 			for(k=1;k<=xp;k++){
 				us[1][banded_striped_epi8_pos2idx(bandwidth, k)] = gape1;
-				uincs[k / W] += gape1 - gape2;
+				ubegs[k / W] += gape1 - gape2;
 			}
 		} else {
 			GAP = mm_set1_epi8(gape1);
 			for(k=0;k<W;k++) mm_store(((xint*)us[1]) + k, GAP);
 			us[1][0] = gapo1 + gape1 + min_nt - max_nt;
-			for(k=0;k<WORDSIZE;k++) uincs[k] = gape1 * W;
-			uincs[0] += us[1][0] - gape1;
+			for(k=0;k<WORDSIZE;k++) ubegs[k] = gape1 * W;
+			ubegs[0] += us[1][0] - gape1;
 		}
-		ubegs[0] = 0;
-		for(k=1;k<WORDSIZE;k++){
-			ubegs[k] = ubegs[k - 1] + uincs[k - 1];
+		s = 0;
+		for(k=0;k<WORDSIZE;k++){
+			t = ubegs[k];
+			ubegs[k] = s;
+			s += t;
 		}
+		ubegs[k] = s;
 		begs[-1] = - Int(bandwidth);
 	} else {
 		for(k=0;k<W;k++) mm_store(((xint*)us[1]) + k, ZERO);
 		begs[-1] = 0;
-		memset(ubegs, 0, WORDSIZE * sizeof(int));
-		memset(uincs, 0, WORDSIZE * sizeof(int));
+		memset(ubegs, 0, (WORDSIZE + 1) * sizeof(int));
 	}
 	if(gapo2 < gapo1 && gape2 > gape1 && gapo2 + gape2 < gapo1 + gape1){
 		for(k=0;k<W;k++) mm_store(((xint*)es[1]) + k, MIN);
@@ -341,8 +349,8 @@ static inline void banded_striped_epi8_seqalign_set_query_prof(u1i *qseq, u4i ql
 	}
 }
 
-static inline void banded_striped_epi8_seqalign_piecex_row_mov(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs, int *uincs, u4i W, u4i mov, int piecewise){
-	xint u, x, UBS[4], USS[4];
+static inline void banded_striped_epi8_seqalign_piecex_row_mov(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs, u4i W, u4i mov, int piecewise){
+	xint u, x, UBS[4];
 	u4i i, div;
 	if(mov > W){
 		fprintf(stderr, " -- mov(%d) > W(%d) in %s -- %s:%d --\n", mov, W, __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
@@ -371,49 +379,30 @@ static inline void banded_striped_epi8_seqalign_piecex_row_mov(b1i *us[2], b1i *
 		u = mm_srli(u, 1);
 		u = mm_insert_epi8(u, SEQALIGN_SCORE_EPI8_MIN, WORDSIZE - 1);
 	}
+	for(i=div;i<W;i++){
+		mm_store(((xint*)us[0]) + i, u);
+		u = mm_load(((xint*)us[1]) + (i + mov - W + 1) % W);
+		u = mm_srli(u, 1);
+	}
 	{
 		UBS[0] = mm_load(((xint*)ubegs) + 0);
 		UBS[1] = mm_load(((xint*)ubegs) + 1);
 		UBS[2] = mm_load(((xint*)ubegs) + 2);
 		UBS[3] = mm_load(((xint*)ubegs) + 3);
-		USS[0] = mm_load(((xint*)uincs) + 0);
-		USS[1] = mm_load(((xint*)uincs) + 1);
-		USS[2] = mm_load(((xint*)uincs) + 2);
-		USS[3] = mm_load(((xint*)uincs) + 3);
-	}
-	for(i=div;i<W;i++){
-		mm_store(((xint*)us[0]) + i, u);
-		USS[0] = mm_add_epi32(USS[0], mm_cvtepi8x0_epi32(u));
-		USS[1] = mm_add_epi32(USS[1], mm_cvtepi8x1_epi32(u));
-		USS[2] = mm_add_epi32(USS[2], mm_cvtepi8x2_epi32(u));
-		USS[3] = mm_add_epi32(USS[3], mm_cvtepi8x3_epi32(u));
-		u = mm_load(((xint*)us[1]) + (i + mov - W + 1) % W);
-		u = mm_srli(u, 1);
 	}
 	for(i=0;i<mov;i++){
 		u = mm_load(((xint*)us[1]) + i);
-		x = mm_cvtepi8x0_epi32(u);
-		UBS[0] = mm_add_epi32(UBS[0], x);
-		USS[0] = mm_sub_epi32(USS[0], x);
-		x = mm_cvtepi8x1_epi32(u);
-		UBS[1] = mm_add_epi32(UBS[1], x);
-		USS[1] = mm_sub_epi32(USS[1], x);
-		x = mm_cvtepi8x2_epi32(u);
-		UBS[2] = mm_add_epi32(UBS[2], x);
-		USS[2] = mm_sub_epi32(USS[2], x);
-		x = mm_cvtepi8x3_epi32(u);
-		UBS[3] = mm_add_epi32(UBS[3], x);
-		USS[3] = mm_sub_epi32(USS[3], x);
+		UBS[0] = mm_add_epi32(UBS[0], mm_cvtepi8x0_epi32(u));
+		UBS[1] = mm_add_epi32(UBS[1], mm_cvtepi8x1_epi32(u));
+		UBS[2] = mm_add_epi32(UBS[2], mm_cvtepi8x2_epi32(u));
+		UBS[3] = mm_add_epi32(UBS[3], mm_cvtepi8x3_epi32(u));
 	}
 	{
 		mm_store(((xint*)ubegs) + 0, UBS[0]);
 		mm_store(((xint*)ubegs) + 1, UBS[1]);
 		mm_store(((xint*)ubegs) + 2, UBS[2]);
 		mm_store(((xint*)ubegs) + 3, UBS[3]);
-		mm_store(((xint*)uincs) + 0, USS[0]);
-		mm_store(((xint*)uincs) + 1, USS[1]);
-		mm_store(((xint*)uincs) + 2, USS[2]);
-		mm_store(((xint*)uincs) + 3, USS[3]);
+		ubegs[WORDSIZE] += SEQALIGN_SCORE_EPI8_MIN;
 	}
 	if(piecewise){
 		for(;i<W;i++){
@@ -431,53 +420,103 @@ static inline void banded_striped_epi8_seqalign_piecex_row_mov(b1i *us[2], b1i *
 	}
 }
 
-/*
-static inline void banded_striped_epi8_seqalign_piecex_row_merge(int rh[2], b1i *us[2], b1i *es[2], b1i *qs[2], b1i *os[3], u4i W, int piecewise){
-	xint s[2][2], u, e, q, t, c, o;
-	u4i i, j;
-	int sft, sc, st;
-	b1i ary[2][WORDSIZE];
-	sft = num_min(rh[0], rh[1]);
-	for(i=0;i<2;i++){
-		s[i][0] = mm_set1_epi16(0);
-		s[i][1] = mm_set1_epi16(0);
-		for(j=0;j<W;j++){
-			t = mm_load(((xint*)us[i]) + j);
-			s[i][0] = mm_adds_epi16(s[i][0], mm_cvtepi8lo_epi16(t));
-			s[i][1] = mm_adds_epi16(s[i][1], mm_cvtepi8hi_epi16(t));
+static inline void banded_striped_epi8_seqalign_piecex_row_merge(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs[2], b1i *os[3], b1i osmarks[2], u4i W, int piecewise){
+	xint s[2][4], m[2][4], u[2], x[2][4], e[2], c[4], mrk[2];
+	u4i i, j, k, p;
+	mrk[0] = mm_set1_epi8(osmarks[0]);
+	mrk[1] = mm_set1_epi8(osmarks[1]);
+	for(k=0;k<2;k++){
+		for(j=0;j<4;j++){
+			s[k][j] = mm_load(((xint*)ubegs[k]) + j);
 		}
-		mm_store(((xint*)ary[i]) + 0, s[i][0]);
-		mm_store(((xint*)ary[i]) + 1, s[i][1]);
-		sc = rh[i] - sft;
-		for(j=0;j<WORDSIZE;j++){
-			st = ary[i];
-			ary[i][j] = sc;
-			sc = st + sc;
-		}
-		s[i][0] = mm_load(((xint*)ary[i]) + 0);
-		s[i][1] = mm_load(((xint*)ary[i]) + 1);
 	}
-	// TODO: unfinished
+	p = 0;
+	for(j=0;j<4;j++){
+		m[p][j] = mm_max_epi32(s[0][j], s[1][j]);
+		mm_store(((xint*)ubegs[0]) + j, m[p][j]);
+	}
+	ubegs[0][WORDSIZE] = num_max(ubegs[0][WORDSIZE], ubegs[1][WORDSIZE]);
+	for(i=0;i<W;i++){
+		p = !p;
+		for(k=0;k<2;k++){
+			u[k] = mm_load(((xint*)us[k]) + i);
+			s[k][0] = mm_add_epi32(s[k][0], mm_cvtepi8x0_epi32(u[k]));
+			s[k][1] = mm_add_epi32(s[k][1], mm_cvtepi8x1_epi32(u[k]));
+			s[k][2] = mm_add_epi32(s[k][2], mm_cvtepi8x2_epi32(u[k]));
+			s[k][3] = mm_add_epi32(s[k][3], mm_cvtepi8x3_epi32(u[k]));
+		}
+		for(j=0;j<4;j++){
+			c[j] = mm_cmpgt_epi32(s[1][j], s[0][j]);
+			m[p][j] = mm_max_epi32(s[0][j], s[1][j]);
+			m[!p][j] = mm_sub_epi32(m[p][j], m[!p][j]);
+		}
+		u[0] = mm_packs_epi32(m[!p][0], m[!p][1]);
+		u[1] = mm_packs_epi32(m[!p][2], m[!p][3]);
+		u[0] = mm_packs_epi16(u[0], u[1]);
+		mm_store(((xint*)us[0]) + i, u[0]);
+		c[0] = mm_packs_epi32(c[0], c[1]);
+		c[1] = mm_packs_epi32(c[2], c[3]);
+		c[0] = mm_packs_epi16(c[0], c[1]);
+		c[0] = mm_blendv(mrk[0], mrk[1], c[0]);
+		mm_store(((xint*)os[0]) + i, c[0]);
+		if(__builtin_constant_p(piecewise == 0)) continue;
+		for(k=0;k<2;k++){
+			e[k] = mm_load(((xint*)es[k]) + i);
+			x[k][0] = mm_add_epi32(s[k][0], mm_cvtepi8x0_epi32(e[k]));
+			x[k][1] = mm_add_epi32(s[k][1], mm_cvtepi8x1_epi32(e[k]));
+			x[k][2] = mm_add_epi32(s[k][2], mm_cvtepi8x2_epi32(e[k]));
+			x[k][3] = mm_add_epi32(s[k][3], mm_cvtepi8x3_epi32(e[k]));
+		}
+		for(j=0;j<4;j++){
+			c[j] = mm_cmpgt_epi32(x[1][j], x[0][j]);
+			m[!p][j] = mm_sub_epi32(m[p][j], m[!p][j]);
+		}
+		e[0] = mm_packs_epi32(m[!p][0], m[!p][1]);
+		e[1] = mm_packs_epi32(m[!p][2], m[!p][3]);
+		e[0] = mm_packs_epi16(e[0], e[1]);
+		mm_store(((xint*)es[0]) + i, e[0]);
+		c[0] = mm_packs_epi32(c[0], c[1]);
+		c[1] = mm_packs_epi32(c[2], c[3]);
+		c[0] = mm_packs_epi16(c[0], c[1]);
+		c[0] = mm_blendv(mrk[0], mrk[1], c[0]);
+		mm_store(((xint*)os[1]) + i, c[0]);
+		if(__builtin_constant_p(piecewise == 1)) continue;
+		for(k=0;k<2;k++){
+			e[k] = mm_load(((xint*)qs[k]) + i);
+			x[k][0] = mm_add_epi32(s[k][0], mm_cvtepi8x0_epi32(e[k]));
+			x[k][1] = mm_add_epi32(s[k][1], mm_cvtepi8x1_epi32(e[k]));
+			x[k][2] = mm_add_epi32(s[k][2], mm_cvtepi8x2_epi32(e[k]));
+			x[k][3] = mm_add_epi32(s[k][3], mm_cvtepi8x3_epi32(e[k]));
+		}
+		for(j=0;j<4;j++){
+			c[j] = mm_cmpgt_epi32(x[1][j], x[0][j]);
+			m[!p][j] = mm_sub_epi32(m[p][j], m[!p][j]);
+		}
+		e[0] = mm_packs_epi32(m[!p][0], m[!p][1]);
+		e[1] = mm_packs_epi32(m[!p][2], m[!p][3]);
+		e[0] = mm_packs_epi16(e[0], e[1]);
+		mm_store(((xint*)qs[0]) + i, e[0]);
+		c[0] = mm_packs_epi32(c[0], c[1]);
+		c[1] = mm_packs_epi32(c[2], c[3]);
+		c[0] = mm_packs_epi16(c[0], c[1]);
+		c[0] = mm_blendv(mrk[0], mrk[1], c[0]);
+		mm_store(((xint*)os[2]) + i, c[0]);
+	}
 }
-*/
 
-static inline __attribute__((always_inline)) int banded_striped_epi8_seqalign_piecex_row_cal_tail_codes(xint h, xint u, xint v, b1i *us[2], b1i fs[WORDSIZE], int *ubegs, int *uincs, u4i W, int ph, int rh, int bt0){
+static inline __attribute__((always_inline)) int banded_striped_epi8_seqalign_piecex_row_cal_tail_codes(xint h, xint u, xint v, b1i *us[2], b1i *fs, int *ubegs, u4i W, int ph, int rh, int bt0){
 	u4i i;
 	UNUSED(W);
-	UNUSED(uincs);
 	// revise the first striped block of u
 	v = mm_subs_epi8(h, u); // v(x - 1, y) = h(x - 1, y) - u(x - 1, y - 1)
+	mm_store((xint*)fs, v);
+	for(i=1;i<=WORDSIZE;i++){
+		ubegs[i] += fs[i - 1];
+	}
 	v = mm_slli(v, 1);
 	u = mm_load(((xint*)us[1]) + 0);
 	u = mm_subs_epi8(u, v); // because I previously set v to zero, now update it, u(x, y) = h(x, y) - v(x - 1, y)
 	mm_store(((xint*)us[1]) + 0, u);
-	// update ubegs
-	//u = mm_subs_epi8(u, mm_load(((xint*)us[0]) + 0)); // u(x, y) - u(x, y - 1)
-	//v = mm_adds_epi8(v, u); // v(x, y) = v(x - 1, y) + (u(x, y) - u(x, y - 1))
-	mm_store((xint*)fs, v);
-	for(i=0;i<WORDSIZE;i++){
-		ubegs[i] += fs[i];
-	}
 	// shift score to fit EPI8
 	if(bt0 == SEQALIGN_BT_M){
 		if(us[1][0] == 0){
@@ -494,22 +533,22 @@ static inline __attribute__((always_inline)) int banded_striped_epi8_seqalign_pi
 	return rh;
 }
 
-static inline __attribute__((always_inline)) xint banded_striped_epi8_seqalign_piecex_row_cal_FPenetration_codes(u4i W, xint f, b1i fs[WORDSIZE], int uincs[WORDSIZE], b1i gape){
+static inline __attribute__((always_inline)) xint banded_striped_epi8_seqalign_piecex_row_cal_FPenetration_codes(u4i W, xint f, b1i *fs, int *ubegs, b1i gape){
 	int i, s, t;
 	f = mm_slli(f, 1);
 	mm_store((xint*)fs, f);
 	fs[0] = SEQALIGN_SCORE_EPI8_MIN;
 	t = W * gape;
-	s = t + fs[0] - uincs[0];
+	s = t + fs[0] - (ubegs[1] - ubegs[0]);
 	for(i=1;i<WORDSIZE;i++){
 		if(fs[i] < s) fs[i] = s;
-		s = t + fs[i] - uincs[i];
+		s = t + fs[i] - (ubegs[i + 1] - ubegs[i]);
 	}
 	f = mm_load((xint*)fs);
 	return f;
 }
 
-static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], b1i *bs, int *ubegs, int *uincs, b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, u4i mov, int ph, int rh){
+static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], b1i *bs, int *ubegs, b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, u4i mov, int ph, int rh){
 	xint h, e, f, u, v, c, d, z;
 	xint I, D, GapE;
 	b1i fs[WORDSIZE];
@@ -550,7 +589,7 @@ static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base
 		// preparing next h
 		h = mm_load(((xint*)qprof) + (rbeg + i + 1) * 4 + base);
 	}
-	f = banded_striped_epi8_seqalign_piecex_row_cal_FPenetration_codes(W, f, fs, uincs, gape1);
+	f = banded_striped_epi8_seqalign_piecex_row_cal_FPenetration_codes(W, f, fs, ubegs, gape1);
 	// main loop
 	// don't use the h from last W - 1 to calculate v = h - u, because this h maybe updated when F-penetration
 	// will revise v after this loop
@@ -567,7 +606,7 @@ static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base
 		h = mm_max_epi8(e, z);
 		// max(f, h)
 		c = mm_cmpgt_epi8(f, h);
-		d = mm_blendv_epi8(d, I, c);
+		d = mm_blendv(d, I, c);
 		h = mm_max_epi8(f, h);
 		mm_store(((xint*)bs) + i, d);
 		// calculate u(x, y)
@@ -579,10 +618,10 @@ static inline int banded_striped_epi8_seqalign_piece0_row_cal(u4i rbeg, u1i base
 		f = mm_subs_epi8(f, u);
 		z = mm_load(((xint*)qprof) + (rbeg + i + 1) * 4 + base);
 	}
-	return banded_striped_epi8_seqalign_piecex_row_cal_tail_codes(h, u, v, us, fs, ubegs, uincs, W, ph, rh, bt0);
+	return banded_striped_epi8_seqalign_piecex_row_cal_tail_codes(h, u, v, us, fs, ubegs, W, ph, rh, bt0);
 }
 
-static inline int banded_striped_epi8_seqalign_piece1_row_cal(u4i rbeg, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], b1i *bs, int *ubegs, int *uincs, b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, u4i mov, int ph, int rh){
+static inline int banded_striped_epi8_seqalign_piece1_row_cal(u4i rbeg, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], b1i *bs, int *ubegs, b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, u4i mov, int ph, int rh){
 	xint h, e, f, u, v, c, d, z;
 	xint I, IE, D, DE, GapOE, GapE;
 	b1i fs[WORDSIZE];
@@ -627,7 +666,7 @@ static inline int banded_striped_epi8_seqalign_piece1_row_cal(u4i rbeg, u1i base
 		// preparing next h
 		h = mm_load(((xint*)qprof) + (rbeg + i + 1) * 4 + base);
 	}
-	f = banded_striped_epi8_seqalign_piecex_row_cal_FPenetration_codes(W, f, fs, uincs, gape1);
+	f = banded_striped_epi8_seqalign_piecex_row_cal_FPenetration_codes(W, f, fs, ubegs, gape1);
 	// main loop
 	// don't use the h from last W - 1 to calculate v = h - u, because this h maybe updated when F-penetration
 	// will revise v after this loop
@@ -645,7 +684,7 @@ static inline int banded_striped_epi8_seqalign_piece1_row_cal(u4i rbeg, u1i base
 		h = mm_max_epi8(e, z);
 		// max(f, h)
 		c = mm_cmpgt_epi8(f, h);
-		d = mm_blendv_epi8(d, I, c);
+		d = mm_blendv(d, I, c);
 		h = mm_max_epi8(f, h);
 		// calculate u(x, y)
 		v = mm_subs_epi8(h, v);
@@ -669,10 +708,10 @@ static inline int banded_striped_epi8_seqalign_piece1_row_cal(u4i rbeg, u1i base
 		z = mm_load(((xint*)qprof) + (rbeg + i + 1) * 4 + base);
 	}
 	h = mm_subs_epi8(h, GapOE);
-	return banded_striped_epi8_seqalign_piecex_row_cal_tail_codes(h, u, v, us, fs, ubegs, uincs, W, ph, rh, bt0);
+	return banded_striped_epi8_seqalign_piecex_row_cal_tail_codes(h, u, v, us, fs, ubegs, W, ph, rh, bt0);
 }
 
-static inline int banded_striped_epi8_seqalign_piece2_row_cal(u4i rbeg, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], b1i *bs, int *ubegs, int *uincs, b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, u4i mov, int ph, int rh){
+static inline int banded_striped_epi8_seqalign_piece2_row_cal(u4i rbeg, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], b1i *bs, int *ubegs, b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, u4i mov, int ph, int rh){
 	xint h, e, q, f, g, u, v, c, d, z;
 	xint I1, I2, IE1, IE2, D1, D2, DE1, DE2, GapOE, GapE, GapQP, GapP, GapOQ;
 	b1i fs[WORDSIZE];
@@ -730,8 +769,8 @@ static inline int banded_striped_epi8_seqalign_piece2_row_cal(u4i rbeg, u1i base
 		// preparing next h
 		h = mm_load(((xint*)qprof) + (rbeg + i + 1) * 4 + base);
 	}
-	f = banded_striped_epi8_seqalign_piecex_row_cal_FPenetration_codes(W, f, fs, uincs, gape1);
-	g = banded_striped_epi8_seqalign_piecex_row_cal_FPenetration_codes(W, g, fs, uincs, gape2);
+	f = banded_striped_epi8_seqalign_piecex_row_cal_FPenetration_codes(W, f, fs, ubegs, gape1);
+	g = banded_striped_epi8_seqalign_piecex_row_cal_FPenetration_codes(W, g, fs, ubegs, gape2);
 	// main loop
 	v = mm_set1_epi8(0);
 	h = mm_load(((xint*)qprof) + (rbeg + 0) * 4 + base);
@@ -748,14 +787,14 @@ static inline int banded_striped_epi8_seqalign_piece2_row_cal(u4i rbeg, u1i base
 		h = mm_max_epi8(e, z);
 		q = mm_adds_epi8(q, u);
 		c = mm_cmpgt_epi8(q, h);
-		d = mm_blendv_epi8(d, D2, c);
+		d = mm_blendv(d, D2, c);
 		h = mm_max_epi8(q, h);
 		// max(f, g, h)
 		c = mm_cmpgt_epi8(f, h);
-		d = mm_blendv_epi8(d, I1, c);
+		d = mm_blendv(d, I1, c);
 		h = mm_max_epi8(f, h);
 		c = mm_cmpgt_epi8(g, h);
-		d = mm_blendv_epi8(d, I2, c);
+		d = mm_blendv(d, I2, c);
 		h = mm_max_epi8(g, h);
 		// calculate u(x, y)
 		v = mm_subs_epi8(h, v);
@@ -791,178 +830,70 @@ static inline int banded_striped_epi8_seqalign_piece2_row_cal(u4i rbeg, u1i base
 		z = mm_load(((xint*)qprof) + (rbeg + i + 1) * 4 + base);
 	}
 	h = mm_subs_epi8(h, GapQP);
-	return banded_striped_epi8_seqalign_piecex_row_cal_tail_codes(h, u, v, us, fs, ubegs, uincs, W, ph, rh, bt0);
+	return banded_striped_epi8_seqalign_piecex_row_cal_tail_codes(h, u, v, us, fs, ubegs, W, ph, rh, bt0);
 }
 
-static inline u4i banded_striped_epi8_seqalign_row_max(b1i *us, u4i W, int *ubegs, int *uincs, int *wscores[2], int *max_score){
-	xint h, c, m, Max[4], max[2], Scr[4], scr[2], Idx[4], num[2], ONE;
-	u4i k, i, j, x, y, WX;
-	int score, tmp, ary[WORDSIZE];
-	// find max
+static inline u4i banded_striped_epi8_seqalign_row_max(b1i *us, u4i W, int *ubegs, int *wscores[2], int *max_score){
+	xint h, c, xi, Max[4], Scr[4], Idx[4], Num[2];
+	u4i i, x;
+	int ary[3][WORDSIZE/4];
 	for(i=0;i<4;i++){
-		Idx[i] = Scr[i] = Max[i] = mm_set1_epi32(0);
+		Scr[i] = mm_load(((xint*)ubegs) + i);
+		Max[i] = mm_set1_epi32(SEQALIGN_SCORE_MIN);
+		Idx[i] = mm_set1_epi32(0);
 	}
-	ONE = mm_set1_epi16(1);
-	WX = roundup_times(W, WORDSIZE / 4) / (WORDSIZE / 4);
-	if(wscores[0] == NULL){
-		wscores[0] = calloc(WX * WORDSIZE / 4, sizeof(int));
+	for(i=0;i<W;i++){
+		h = mm_load(((xint*)us) + i);
+		Scr[0] = mm_add_epi32(Scr[0], mm_cvtepi8x0_epi32(h));
+		Scr[1] = mm_add_epi32(Scr[1], mm_cvtepi8x1_epi32(h));
+		Scr[2] = mm_add_epi32(Scr[2], mm_cvtepi8x2_epi32(h));
+		Scr[3] = mm_add_epi32(Scr[3], mm_cvtepi8x3_epi32(h));
+		wscores[0][i] = mm_extract_epi32(Scr[0], 0);
+		wscores[1][i] = mm_extract_epi32(Scr[3], WORDSIZE / 4 - 1);
+		xi = mm_set1_epi32(i);
+		Idx[0] = mm_blendv(Idx[0], xi, mm_cmpgt_epi32(Scr[0], Max[0])); Max[0] = mm_max_epi32(Max[0], Scr[0]);
+		Idx[1] = mm_blendv(Idx[1], xi, mm_cmpgt_epi32(Scr[1], Max[1])); Max[1] = mm_max_epi32(Max[1], Scr[1]);
+		Idx[2] = mm_blendv(Idx[2], xi, mm_cmpgt_epi32(Scr[2], Max[2])); Max[2] = mm_max_epi32(Max[2], Scr[2]);
+		Idx[3] = mm_blendv(Idx[3], xi, mm_cmpgt_epi32(Scr[3], Max[3])); Max[3] = mm_max_epi32(Max[3], Scr[3]);
 	}
-	if(wscores[1] == NULL){
-		wscores[1] = calloc(WX * WORDSIZE / 4, sizeof(int));
-	}
-	for(k=0;k<W;k+=256){
-		x = k;
-		y = num_min(x + 256, W);
-		for(i=0;i<2;i++){
-			scr[i] = max[i] = mm_set1_epi16(0);
-		}
-		for(i=x;i<y;i++){
-			h = mm_load(((xint*)us) + i);
-			{
-				m = mm_cvtepi8lo_epi16(h);
-				scr[0] = mm_adds_epi16(scr[0], m);
-				max[0] = mm_max_epi16(max[0], scr[0]);
-				m = mm_cvtepi8hi_epi16(h);
-				scr[1] = mm_adds_epi16(scr[1], m);
-				max[1] = mm_max_epi16(max[1], scr[1]);
+	if(1){
+		int rs[WORDSIZE];
+		mm_store(((xint*)rs) + 0, Scr[0]);
+		mm_store(((xint*)rs) + 1, Scr[1]);
+		mm_store(((xint*)rs) + 2, Scr[2]);
+		mm_store(((xint*)rs) + 3, Scr[3]);
+		for(i=1;i<=WORDSIZE;i++){
+			if(ubegs[i] != rs[i-1]){
+				fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+				abort();
 			}
-			wscores[0][i] = (b2i)mm_extract_epi16(scr[0], 0);
-			wscores[1][i] = (b2i)mm_extract_epi16(scr[1], WORDSIZE / 2 - 1);
-		}
-		num[0] = mm_set1_epi32(mm_extract_epi32(Scr[0], 0));
-		num[1] = mm_set1_epi32(mm_extract_epi32(Scr[3], WORDSIZE / 4 - 1));
-		for(i=x;i<y;i+=WORDSIZE/4){
-			h = mm_load((xint*)(wscores[0] + i));
-			h = mm_add_epi32(h, num[0]);
-			mm_store((xint*)(wscores[0] + i), h);
-			h = mm_load((xint*)(wscores[1] + i));
-			h = mm_add_epi32(h, num[1]);
-			mm_store((xint*)(wscores[1] + i), h);
-		}
-		h = mm_set1_epi32(k);
-		for(i=0;i<4;i++){
-			j = i / 2;
-			// value of max score
-			m = mm_cvtepi16lo_epi32(max[j]);
-			max[j] = mm_srli(max[j], WORDSIZE / 2);
-			m = mm_add_epi32(m, Scr[i]);
-			c = mm_cmpgt_epi32(m, Max[i]);
-			Max[i] = mm_blendv_epi8(Max[i], m, c);
-			Idx[i] = mm_blendv_epi8(Idx[i], h, c);
-			// add scores
-			m = mm_cvtepi16lo_epi32(scr[j]);
-			Scr[i] = mm_add_epi32(Scr[i], m);
-			scr[j] = mm_srli(scr[j], WORDSIZE / 2);
 		}
 	}
-	mm_store(((xint*)uincs) + 0, Scr[0]);
-	mm_store(((xint*)uincs) + 1, Scr[1]);
-	mm_store(((xint*)uincs) + 2, Scr[2]);
-	mm_store(((xint*)uincs) + 3, Scr[3]);
-	num[0] = mm_set1_epi32(ubegs[0]);
-	num[1] = mm_set1_epi32(ubegs[WORDSIZE - 1]);
-	for(i=0;i<WX;i++){
-		h = mm_load(((xint*)wscores[0]) + i);
-		h = mm_add_epi32(h, num[0]);
-		mm_store(((xint*)wscores[0]) + i, h);
-		h = mm_load(((xint*)wscores[1]) + i);
-		h = mm_add_epi32(h, num[1]);
-		mm_store(((xint*)wscores[1]) + i, h);
-	}
-	Max[0] = mm_add_epi32(mm_load(((xint*)ubegs) + 0), Max[0]);
-	Max[1] = mm_add_epi32(mm_load(((xint*)ubegs) + 1), Max[1]);
-	Max[2] = mm_add_epi32(mm_load(((xint*)ubegs) + 2), Max[2]);
-	Max[3] = mm_add_epi32(mm_load(((xint*)ubegs) + 3), Max[3]);
-	mm_store(((xint*)ary) + 0, Max[0]);
-	mm_store(((xint*)ary) + 1, Max[1]);
-	mm_store(((xint*)ary) + 2, Max[2]);
-	mm_store(((xint*)ary) + 3, Max[3]);
+	c = mm_cmpgt_epi32(Max[0], Max[1]); Idx[0] = mm_blendv(Idx[0], Idx[1], c); Num[0] = mm_blendv(mm_set1_epi32(0), mm_set1_epi32(1), c); Max[0] = mm_max_epi32(Max[0], Max[1]);
+	c = mm_cmpgt_epi32(Max[1], Max[2]); Idx[1] = mm_blendv(Idx[2], Idx[3], c); Num[1] = mm_blendv(mm_set1_epi32(2), mm_set1_epi32(3), c); Max[1] = mm_max_epi32(Max[2], Max[3]);
+	c = mm_cmpgt_epi32(Max[0], Max[1]); Idx[0] = mm_blendv(Idx[0], Idx[1], c); Num[0] = mm_blendv(Num[0], Num[1], c); Max[0] = mm_max_epi32(Max[0], Max[1]);
+	mm_store(((xint*)ary[0]), Max[0]);
+	mm_store(((xint*)ary[1]), Idx[0]);
+	mm_store(((xint*)ary[2]), Num[0]);
+	*max_score = ary[0][0];
 	x = 0;
-	for(i=1;i<WORDSIZE;i++){
-		if(ary[i] > ary[x]){
+	for(i=1;i<WORDSIZE/4;i++){
+		if(ary[0][i] > *max_score){
+			*max_score = ary[0][i];
 			x = i;
 		}
 	}
-	*max_score = ary[x];
-	mm_store(((xint*)ary) + 0, Idx[x / (WORDSIZE / 4)]);
-	y = ary[x % (WORDSIZE / 4)];
-	// find the index of max score in <= 256 cells
-	j = num_min(y + 256, W);
-	tmp = score = us[y * WORDSIZE + x];
-	k = y;
-	for(i=y+1;i<j;i++){
-		tmp += us[i * WORDSIZE + x];
-		if(tmp > score){
-			score = tmp;
-			k = i;
-		}
-	}
-	return x * W + k; // convert striped into normal coordinate
+	x = (ary[2][x] * WORDSIZE / 4 + x) * W + ary[1][x];
+	return x;
 }
 
-static inline void banded_striped_epi8_seqalign_row_look(b1i *us, u4i W, int *ubegs, int *uincs, int *wscores[2]){
-	xint h, m, Scr[4], scr[2], num[2];
-	u4i k, i, j, x, y, WX;
-	// find max
-	for(i=0;i<4;i++){
-		Scr[i] = mm_set1_epi32(0);
-	}
-	WX = roundup_times(W, WORDSIZE / 4) / (WORDSIZE / 4);
-	if(wscores[0] == NULL){
-		wscores[0] = calloc(WX * WORDSIZE / 4, sizeof(int));
-	}
-	if(wscores[1] == NULL){
-		wscores[1] = calloc(WX * WORDSIZE / 4, sizeof(int));
-	}
-	for(k=0;k<W;k+=256){
-		x = k;
-		y = num_min(x + 256, W);
-		for(i=0;i<2;i++){
-			scr[i] = mm_set1_epi16(0);
-		}
-		for(i=x;i<y;i++){
-			h = mm_load(((xint*)us) + i);
-			{
-				m = mm_cvtepi8lo_epi16(h);
-				scr[0] = mm_adds_epi16(scr[0], m);
-				m = mm_cvtepi8hi_epi16(h);
-				scr[1] = mm_adds_epi16(scr[1], m);
-			}
-			wscores[0][i] = (b2i)mm_extract_epi16(scr[0], 0);
-			wscores[1][i] = (b2i)mm_extract_epi16(scr[1], WORDSIZE / 2 - 1);
-		}
-		num[0] = mm_set1_epi32(mm_extract_epi32(Scr[0], 0));
-		num[1] = mm_set1_epi32(mm_extract_epi32(Scr[3], WORDSIZE / 4 - 1));
-		for(i=x;i<y;i+=WORDSIZE/4){
-			h = mm_load((xint*)(wscores[0] + i));
-			h = mm_add_epi32(h, num[0]);
-			mm_store((xint*)(wscores[0] + i), h);
-			h = mm_load((xint*)(wscores[1] + i));
-			h = mm_add_epi32(h, num[1]);
-			mm_store((xint*)(wscores[1] + i), h);
-		}
-		h = mm_set1_epi32(k);
-		for(i=0;i<4;i++){
-			j = i / 2;
-			// add scores
-			m = mm_cvtepi16lo_epi32(scr[j]);
-			Scr[i] = mm_add_epi32(Scr[i], m);
-			scr[j] = mm_srli(scr[j], WORDSIZE / 2);
-		}
-	}
-	mm_store(((xint*)uincs) + 0, Scr[0]);
-	mm_store(((xint*)uincs) + 1, Scr[1]);
-	mm_store(((xint*)uincs) + 2, Scr[2]);
-	mm_store(((xint*)uincs) + 3, Scr[3]);
-	num[0] = mm_set1_epi32(ubegs[0]);
-	num[1] = mm_set1_epi32(ubegs[WORDSIZE - 1]);
-	for(i=0;i<WX;i++){
-		h = mm_load(((xint*)wscores[0]) + i);
-		h = mm_add_epi32(h, num[0]);
-		mm_store(((xint*)wscores[0]) + i, h);
-		h = mm_load(((xint*)wscores[1]) + i);
-		h = mm_add_epi32(h, num[1]);
-		mm_store(((xint*)wscores[1]) + i, h);
+static inline void banded_striped_epi8_seqalign_row_look(b1i *us, u4i W, int *ubegs, int *wscores[2]){
+	u4i i;
+	wscores[0][0] = ubegs[0] + us[0];
+	wscores[1][0] = ubegs[WORDSIZE - 1] + us[WORDSIZE - 1];
+	for(i=1;i<W;i++){
+		wscores[0][i] = wscores[0][i - 1] + us[i << WORDSHIFT];
+		wscores[1][i] = wscores[1][i - 1] + us[(i << WORDSHIFT) + WORDSIZE - 1];
 	}
 }
 
@@ -1311,7 +1242,7 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq,
 	b1i *memp, *mempb, *qprof, *us[2], *es[2], *qs[2], *bs, *bs0;
 	u8i mpsize;
 	u4i i, W, rbeg, rmax, mov;
-	int piecewise, smax, smin, lst_score, score, ph, rh, hh, wl, wr, wt, rbx, rby, rbz, *begs, *wscores[2], ubegs[WORDSIZE], uincs[WORDSIZE];
+	int piecewise, smax, smin, lst_score, score, ph, rh, hh, wl, wr, wt, rbx, rby, rbz, *begs, *wscores[2], ubegs[WORDSIZE + 1];
 	u1i tbase;
 	set_qprof  = banded_striped_epi8_seqalign_set_query_prof;
 	row_init   = banded_striped_epi8_seqalign_piecex_row_init;
@@ -1374,7 +1305,7 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq,
 	set_qprof(qseq, qlen, qprof, bandwidth, matrix);
 	memset(&rs, 0, sizeof(seqalign_result_t));
 	rs.score = SEQALIGN_SCORE_MIN;
-	row_init(us, es, qs, ubegs, uincs, begs, mode, bandwidth, smax, smin, gapo1, gape1, gapo2, gape2);
+	row_init(us, es, qs, ubegs, begs, mode, bandwidth, smax, smin, gapo1, gape1, gapo2, gape2);
 	// loop rows
 	rbeg = rmax = 0;
 	mov = 0;
@@ -1392,17 +1323,17 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq,
 			mov  = 0;
 			rh = (rbeg == 0 && (mode == SEQALIGN_MODE_OVERLAP || i == 0))? 0 : SEQALIGN_SCORE_MIN;
 		}
-		row_mov(us, es, qs, ubegs, uincs, W, mov, piecewise); // mov and swap
-		hh = row_cal(rbeg, tbase, us, es, qs, bs, ubegs, uincs, qprof, gapo1, gape1, gapo2, gape2, W, mov, ph, rh);
+		row_mov(us, es, qs, ubegs, W, mov, piecewise); // mov and swap
+		hh = row_cal(rbeg, tbase, us, es, qs, bs, ubegs, qprof, gapo1, gape1, gapo2, gape2, W, mov, ph, rh);
 		if(verbose > 2){
 			row_verify(rbeg, W, ph, rh, hh, tbase, us, es, qs, qprof, gapo1, gape1, gapo2, gape2);
 		}
 		if(mode == SEQALIGN_MODE_GLOBAL && verbose == 0){
 			rmax = 0;
 			lst_score = SEQALIGN_SCORE_MIN;
-			row_look(us[1], W, ubegs, uincs, wscores);
+			row_look(us[1], W, ubegs, wscores);
 		} else {
-			rmax = row_max(us[1], W, ubegs, uincs, wscores, &lst_score);
+			rmax = row_max(us[1], W, ubegs, wscores, &lst_score);
 		}
 		// adaptive banded
 		wl = array_epi32_sum(wscores[0], W);
