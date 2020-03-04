@@ -245,9 +245,9 @@ typedef struct {
 #define striped_epi2_seqedit_qprof_size(qlen) (roundup_times(qlen, WORDSIZE * 8) / 2)
 typedef void (*striped_epi2_seqedit_set_query_prof_func)(u1i *qseq, u4i qlen, b1i *qprof);
 typedef void (*striped_epi2_seqedit_row_init_func)(b1i *us[2], u4i W);
-typedef void (*striped_epi2_seqedit_row_cal_func)(b1i *us[2][2], b1i *vs[2], b1i *qprof, u4i W, u1i base);
-typedef seqalign_result_t (*striped_epi2_seqedit_backtrace_func)(b1i *uts[2], b1i *vts[2], u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, u4v *cigars);
-static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars);
+typedef void (*striped_epi2_seqedit_row_cal_func)(b1i *us[2][2], b1i *hs, b1i *qprof, u4i W, u1i base);
+typedef seqalign_result_t (*striped_epi2_seqedit_backtrace_func)(b1i *uts[2], u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, u4v *cigars);
+static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int verbose);
 
 /**
  * Basic function referings for global/extend/overlap DNA sequence alignment, there are implementations in this file
@@ -352,14 +352,14 @@ static inline void striped_epi2_seqedit_set_query_prof(u1i *qseq, u4i qlen, b1i 
 }
 
 static inline void striped_epi2_seqedit_row_init(b1i *us[2], u4i W){
-	xint Z, O;
+	xint BIT0, BIT1;
 	u4i i;
 	// 01
-	Z = mm_set1_epi8(0x00);
-	O = mm_set1_epi8(0xff);
+	BIT0 = mm_set1_epi8(0x00);
+	BIT1 = mm_set1_epi8(0xFF);
 	for(i=0;i<W;i++){
-		mm_store(((xint*)us[0]) + i, Z);
-		mm_store(((xint*)us[1]) + i, O);
+		mm_store(((xint*)us[0]) + i, BIT0);
+		mm_store(((xint*)us[1]) + i, BIT1);
 	}
 }
 
@@ -376,9 +376,28 @@ static inline void fprint_striped_epi1_word(FILE *out, xint v){
 	}
 }
 
+static u1i *QSEQ = NULL;
+static u4i  QLEN = 0;
+static int SCORE = 0;
+
+static inline void print_epi2_row(u1i tbase, b1i *us[2], u4i W){
+	u4i j, b1, b2;
+	int score;
+	score = SCORE;
+	fprintf(stdout, "[%c]\t", "ACGTN"[tbase]);
+	for(j=0;j<W*WORDSIZE*8;j++){
+		b1 = striped_epi2_seqedit_getval(us[0], W, j);
+		b2 = striped_epi2_seqedit_getval(us[1], W, j);
+		if(b1 == 0 && b2 == 1) score ++;
+		else if(b1 == 1 && b2 == 0) score --;
+		fprintf(stdout, "%3d%c%03d:%d%d ", j, j < QLEN? "ACGTN"[QSEQ[j]] : '*', score, b1, b2);
+	}
+	fprintf(stdout, "\n");
+}
+
 // global DNA edit distance
-static inline void striped_epi2_seqedit_row_cal(b1i *us[2][2], b1i *vs[2], b1i *qprof, u4i W, u1i base){
-	xint s, u1, u2, u3, u4, u5, u6, v1, v2, h, BIT0, BIT1, BMSK;
+static inline void striped_epi2_seqedit_row_cal(b1i *us[2][2], b1i *hs, b1i *qprof, u4i W, u1i base){
+	xint s, u1, u2, u3, u4, v1, v2, h, h2, BIT0, BIT1, BMSK;
 	u4i i, running;
 	BIT0 = mm_set1_epi8(0x00);
 	BIT1 = mm_set1_epi8(0xFF);
@@ -399,15 +418,15 @@ static inline void striped_epi2_seqedit_row_cal(b1i *us[2][2], b1i *vs[2], b1i *
 		// H(x, y) = H(x - 1, y - 1) + min(s, u + 1, v + 1)
 		// h = H(x, y) - H(x - 1, y - 1) = min(s, u + 1, v + 1) = 0/1
 		//    s       u       v   =    h
-		//  0(10)  -1(10)  -1(10) =  0(00)
-		//  0(10)  -1(10)   0(00) =  0(00)
-		//  0(10)  -1(10)   1(01) =  0(00)
-		//  0(10)   0(00)  -1(10) =  0(00)
-		//  0(10)   0(00)   0(00) =  0(00)
-		//  0(10)   0(00)   1(01) =  0(00)
-		//  0(10)   1(01)  -1(10) =  0(00)
-		//  0(10)   1(01)   0(00) =  0(00)
-		//  0(10)   1(01)   1(01) =  0(00)
+		//  0(01)  -1(10)  -1(10) =  0(00)
+		//  0(01)  -1(10)   0(00) =  0(00)
+		//  0(01)  -1(10)   1(01) =  0(00)
+		//  0(01)   0(00)  -1(10) =  0(00)
+		//  0(01)   0(00)   0(00) =  0(00)
+		//  0(01)   0(00)   1(01) =  0(00)
+		//  0(01)   1(01)  -1(10) =  0(00)
+		//  0(01)   1(01)   0(00) =  0(00)
+		//  0(01)   1(01)   1(01) =  0(00)
 		//  1(00)  -1(10)   0(00) =  0(00)
 		//  1(00)  -1(10)   1(01) =  0(00)
 		//  1(00)   0(00)  -1(10) =  0(00)
@@ -418,11 +437,11 @@ static inline void striped_epi2_seqedit_row_cal(b1i *us[2][2], b1i *vs[2], b1i *
 		//  1(00)   1(01)   1(01) =  1(01)
 		//    ^^      ^^      ^^       ^^
 		//    ab      cd      ef       xy
-		// a <- s
+		// b <- s
 		// c <- u1
 		// e <- v1
 		// x = 0
-		// y = ~(a | c | e)
+		// y = ~(b | c | e)
 		h  = mm_andnot(mm_or(s, mm_or(u1, v1)), BIT1);
 		// manipulate bit by bit for u' = h - v
 		//    h       v   =    u'
@@ -459,53 +478,62 @@ static inline void striped_epi2_seqedit_row_cal(b1i *us[2][2], b1i *vs[2], b1i *
 	}
 		row_cal_sub2();
 	inline void row_cal_sub3(){
+		mm_store(((xint*)hs) + i, h);
 		mm_store(((xint*)us[1][0]) + i, u3);
 		mm_store(((xint*)us[1][1]) + i, u4);
-		mm_store(((xint*)vs[0]) + i, v1);
-		mm_store(((xint*)vs[1]) + i, v2);
 	}
 		row_cal_sub3();
+		//print_epi2_row(base, us[1], W);
 	}
 	running = 1;
 	while(running){
-		//fprintf(stdout, "v1 = "); fprint_striped_epi1_word(stdout, v1); fprintf(stdout, "\n");
+		//fprintf(stdout, "\nv1 = "); fprint_striped_epi1_word(stdout, v1); fprintf(stdout, "\n");
 		//fprintf(stdout, "v2 = "); fprint_striped_epi1_word(stdout, v2); fprintf(stdout, "\n");
 		v1 = mm_sl1bit(v1);
 		v2 = mm_or(mm_sl1bit(v2), BMSK);
 		//fprintf(stdout, "v1 = "); fprint_striped_epi1_word(stdout, v1); fprintf(stdout, "\n");
 		//fprintf(stdout, "v2 = "); fprint_striped_epi1_word(stdout, v2); fprintf(stdout, "\n");
+		//fprintf(stdout, "#\n");
 		for(i=0;i<W;i++){
-			s  = mm_load(((xint*)qprof) + base * W + i);
+			s   = mm_load(((xint*)qprof) + base * W + i);
+			h2  = mm_load(((xint*)hs) + i);
 			u1  = mm_load(((xint*)us[0][0]) + i);
 			u2  = mm_load(((xint*)us[0][1]) + i);
-			u5  = mm_load(((xint*)us[1][0]) + i);
-			u6  = mm_load(((xint*)us[1][1]) + i);
-			h  = mm_andnot(mm_or(s, mm_or(u1, v1)), BIT1);
+			h   = mm_andnot(mm_or(s, mm_or(u1, v1)), BIT1);
+			//fprintf(stdout, "hold = "); fprint_striped_epi1_word(stdout, h2); fprintf(stdout, "\n");
+			//fprintf(stdout, "hnew = "); fprint_striped_epi1_word(stdout,  h); fprintf(stdout, "\n");
 			u3 = mm_andnot(h, v2);
 			u4 = mm_xor(v2, mm_or(h, mm_or(v1, v2)));
-			//fprintf(stdout, "u3 = "); fprint_striped_epi1_word(stdout, u3); fprintf(stdout, "\n");
-			//fprintf(stdout, "u5 = "); fprint_striped_epi1_word(stdout, u5); fprintf(stdout, "\n");
-			//fprintf(stdout, "u4 = "); fprint_striped_epi1_word(stdout, u4); fprintf(stdout, "\n");
-			//fprintf(stdout, "u6 = "); fprint_striped_epi1_word(stdout, u6); fprintf(stdout, "\n");
-			// when there is nothing to update, break
-			if(!mm_movemask_epi8(mm_andnot(mm_cmpeq_epi8(u3, u5), BIT1)) && !mm_movemask_epi8(mm_andnot(mm_cmpeq_epi8(u4, u6), BIT1))){
+			v1 = mm_andnot(h, u2);
+			v2 = mm_xor(u2, mm_or(h, mm_or(u1, u2)));
+			mm_store(((xint*)hs) + i, h);
+			mm_store(((xint*)us[1][0]) + i, u3);
+			mm_store(((xint*)us[1][1]) + i, u4);
+#ifdef DEBUG_ED_FULL
+			fprintf(stdout, "i  = %d\n", i);
+			fprintf(stdout, "s  = "); fprint_striped_epi1_word(stdout, s); fprintf(stdout, "\n");
+			fprintf(stdout, "u1 = "); fprint_striped_epi1_word(stdout, u1); fprintf(stdout, "\n");
+			fprintf(stdout, "u2 = "); fprint_striped_epi1_word(stdout, u2); fprintf(stdout, "\n");
+			fprintf(stdout, "v1 = "); fprint_striped_epi1_word(stdout, v1); fprintf(stdout, "\n");
+			fprintf(stdout, "v2 = "); fprint_striped_epi1_word(stdout, v2); fprintf(stdout, "\n");
+			fprintf(stdout, "h  = "); fprint_striped_epi1_word(stdout,  h); fprintf(stdout, "\n");
+			fprintf(stdout, "u3 = "); fprint_striped_epi1_word(stdout, u3); fprintf(stdout, "\n");
+			fprintf(stdout, "u4 = "); fprint_striped_epi1_word(stdout, u4); fprintf(stdout, "\n");
+#endif
+			//print_epi2_row(base, us[1], W);
+			//when there is nothing to update, break
+			if(!mm_movemask_epi8(mm_andnot(mm_cmpeq_epi8(h2, h), BIT1))){
 				running = 0;
 				break;
 			}
-			v1 = mm_andnot(h, u2);
-			v2 = mm_xor(u2, mm_or(h, mm_or(u1, u2)));
-			mm_store(((xint*)us[1][0]) + i, u3);
-			mm_store(((xint*)us[1][1]) + i, u4);
-			mm_store(((xint*)vs[0]) + i, v1);
-			mm_store(((xint*)vs[1]) + i, v2);
 		}
 	}
 }
 
-static inline seqalign_result_t striped_epi2_seqedit_backtrace(b1i *uts[2], b1i *vts[2], u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, u4v *cigars){
+static inline seqalign_result_t striped_epi2_seqedit_backtrace(b1i *uts[2], u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, u4v *cigars){
 	seqalign_result_t rs;
 	u4i W, cg, op;
-	int x, y, u1, u2, v1, v2;
+	int x, y, u1, u2, u3, u4;
 	ZEROS(&rs);
 	rs.qe = qlen;
 	rs.te = tlen;
@@ -521,18 +549,18 @@ static inline seqalign_result_t striped_epi2_seqedit_backtrace(b1i *uts[2], b1i 
 			x --;
 			y --;
 		} else {
-			u1 = striped_epi2_seqedit_getval(uts[0] + (y + 1) * W * WORDSIZE, W, x);
-			u2 = striped_epi2_seqedit_getval(uts[1] + (y + 1) * W * WORDSIZE, W, x);
-			if(u1 == 0 && u2 == 1){ // H(x - 1, y) - H(x - 1, y - 1) + 1 == 0
+			u3 = striped_epi2_seqedit_getval(uts[0] + (y + 1) * W * WORDSIZE, W, x);
+			u4 = striped_epi2_seqedit_getval(uts[1] + (y + 1) * W * WORDSIZE, W, x);
+			if(u3 == 0 && u4 == 1){ // H(x - 1, y) - H(x - 1, y - 1) + 1 == 0
 				rs.ins ++;
 				op = 1; // I
 				x --;
 			} else {
-				v1 = striped_epi2_seqedit_getval(vts[0] + (y + 0) * W * WORDSIZE, W, x);
-				v2 = striped_epi2_seqedit_getval(vts[1] + (y + 0) * W * WORDSIZE, W, x);
-				if(v1 == 0 && v2 == 1){
+				u1 = striped_epi2_seqedit_getval(uts[0] + (y + 0) * W * WORDSIZE, W, x);
+				u2 = striped_epi2_seqedit_getval(uts[1] + (y + 0) * W * WORDSIZE, W, x);
+				if(u1 == 1 && u2 == 0){
 					rs.del ++;
-					op = 2; // I
+					op = 2; // D
 					y --;
 				} else {
 					rs.mis ++;
@@ -542,6 +570,15 @@ static inline seqalign_result_t striped_epi2_seqedit_backtrace(b1i *uts[2], b1i 
 				}
 			}
 		}
+		/*
+		if(op == 0){
+			fprintf(stdout, "%c %c\n", "ACGT*"[qseq[x + 1]], "ACGT*"[tseq[y + 1]]);
+		} else if(op == 1){
+			fprintf(stdout, "%c %c\n", "ACGT*"[qseq[x + 1]], '-');
+		} else {
+			fprintf(stdout, "%c %c\n", '-', "ACGT*"[tseq[y + 1]]);
+		}
+		*/
 		if(op == (cg & 0xf)){
 			cg += 0x10;
 		} else {
@@ -552,12 +589,6 @@ static inline seqalign_result_t striped_epi2_seqedit_backtrace(b1i *uts[2], b1i 
 	rs.qb = x + 1;
 	rs.tb = y + 1;
 	rs.aln = rs.mat + rs.mis + rs.ins + rs.del;
-	if(op == (cg & 0xf)){
-		cg += 0x10;
-	} else {
-		if(cg && cigars) push_u4v(cigars, cg);
-		cg = 0x10 | op;
-	}
 	if(rs.qb){
 		op = 1;
 		if(op == (cg & 0xf)){
@@ -578,18 +609,18 @@ static inline seqalign_result_t striped_epi2_seqedit_backtrace(b1i *uts[2], b1i 
 		}
 		rs.tb = 0;
 	}
-	if(cigars) push_u4v(cigars, cg);
+	if(cg && cigars) push_u4v(cigars, cg);
 	if(cigars) reverse_u4v(cigars);
 	return rs;
 }
 
-static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars){
+static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int verbose){
 	striped_epi2_seqedit_set_query_prof_func set_qprof;
 	striped_epi2_seqedit_row_init_func       row_init;
 	striped_epi2_seqedit_row_cal_func        row_cal;
 	striped_epi2_seqedit_backtrace_func      backtrace;
 	seqalign_result_t rs;
-	b1i *memp, *mempb, *qprof, *uts[2], *vts[2], *us[2][2], *vs[2];
+	b1i *memp, *mempb, *qprof, *uts[2], *us[2][2], *hs;
 	u8i mpsize;
 	u4i i, W;
 	set_qprof = striped_epi2_seqedit_set_query_prof;
@@ -600,7 +631,8 @@ static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qle
 	//fprintf(stdout, "qlen=%d\tW=%d\n", qlen, W);
 	mpsize = 0;
 	mpsize += striped_epi2_seqedit_qprof_size(qlen); // qprof[]
-	mpsize += 2 * W * WORDSIZE * ((tlen + 1) + (tlen + 0)); // uts[], vts[]
+	mpsize += 2 * W * WORDSIZE * ((tlen + 1)); // uts[]
+	mpsize += W * WORDSIZE; // hs[]
 	if(mempool){
 		clear_and_encap_b1v(mempool, mpsize);
 		memp = mempool->buffer + WORDSIZE;
@@ -612,39 +644,53 @@ static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qle
 	qprof  = memp; memp += striped_epi2_seqedit_qprof_size(qlen);
 	uts[0] = memp; memp += W * WORDSIZE * (tlen + 1);
 	uts[1] = memp; memp += W * WORDSIZE * (tlen + 1);
-	vts[0] = memp; memp += W * WORDSIZE * (tlen + 0);
-	vts[1] = memp; memp += W * WORDSIZE * (tlen + 0);
+	hs     = memp; memp += W * WORDSIZE;
 	set_qprof(qseq, qlen, qprof);
 	us[0][0] = uts[0];
 	us[0][1] = uts[1];
+	QSEQ = qseq;
+	QLEN = qlen;
 	row_init(us[0], W);
 	for(i=0;i<tlen;i++){
+		SCORE = i + 1;
 		us[0][0] = uts[0] + (i + 0) * W * WORDSIZE;
 		us[0][1] = uts[1] + (i + 0) * W * WORDSIZE;
 		us[1][0] = uts[0] + (i + 1) * W * WORDSIZE;
 		us[1][1] = uts[1] + (i + 1) * W * WORDSIZE;
-		vs[0]    = vts[0] + i * W * WORDSIZE;
-		vs[1]    = vts[1] + i * W * WORDSIZE;
-		row_cal(us, vs, qprof, W, tseq[i]);
-#ifdef DEBUG_ED
-		u4i j, b1, b2, score;
-		score = i + 1;
-		fprintf(stdout, "[%04d:%c]\t", i, "ACGTN"[tseq[i]]);
-		for(j=0;j<qlen;j++){
-			//b = striped_epi2_seqedit_getval(qprof + tseq[i] * (W * WORDSIZE), W, j);
-			b1 = striped_epi2_seqedit_getval(us[1][0], W, j);
-			b2 = striped_epi2_seqedit_getval(us[1][1], W, j);
-			if(b1 == 0 && b2 == 1) score ++;
-			else if(b1 == 1 && b2 == 0) score --;
-			fprintf(stdout, "%c%03d:%d%d", "ACGTN"[qseq[j]], score, b1, b2);
-			b1 = striped_epi2_seqedit_getval(vs[0], W, j);
-			b2 = striped_epi2_seqedit_getval(vs[1], W, j);
-			fprintf(stdout, ":%d%d ", b1, b2);
+		row_cal(us, hs, qprof, W, tseq[i]);
+		if(verbose){
+			int vals[2][2] = {{0, 1}, {-1, 2}};
+			int j, b1, b2, u, u2, v, v2, score;
+			score = i + 1;
+			v2 = 1;
+			fprintf(stdout, "[%04d:%c]\t", i, "ACGTN"[tseq[i]]);
+			for(j=0;j<Int(qlen);j++){
+				b1 = striped_epi2_seqedit_getval(us[0][0], W, j);
+				b2 = striped_epi2_seqedit_getval(us[0][1], W, j);
+				u = vals[b1][b2];
+				v = v2;
+				if(qseq[j] == tseq[i] || u == -1 || v == -1){
+					u2 = 0 - v;
+					v2 =  0 - u;
+				} else {
+					u2 = 1 - v;
+					v2  = 1 - u;
+				}
+				b1 = striped_epi2_seqedit_getval(us[1][0], W, j);
+				b2 = striped_epi2_seqedit_getval(us[1][1], W, j);
+				if(u2 != vals[b1][b2]){
+					fflush(stdout);
+					fprintf(stderr, " -- j=%d s=%c%c u=%d v=%d u2=%d should be %d in %s -- %s:%d --\n", j, "ACGTN"[qseq[j]], "ACGTN"[tseq[i]], u, v, vals[b1][b2], u2, __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+					abort();
+				}
+				if(b1 == 0 && b2 == 1) score ++;
+				else if(b1 == 1 && b2 == 0) score --;
+				fprintf(stdout, "%c%03d:%c:%c ", "ACGTN"[qseq[j]], score, "-0+"[vals[b1][b2] + 1], "-0+"[v2 + 1]);
+			}
+			fprintf(stdout, "\n");
 		}
-		fprintf(stdout, "\n");
-#endif
 	}
-	rs = backtrace(uts, vts, qseq, qlen, tseq, tlen, cigars);
+	rs = backtrace(uts, qseq, qlen, tseq, tlen, cigars);
 	if(mempb) free(mempb);
 	return rs;
 }

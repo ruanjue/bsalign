@@ -99,13 +99,13 @@ int main(int argc, char **argv){
 				tseq->size = seqs->rdlens->buffer[1];
 				for(repn=1;repn<repm;repn++){ // for benchmarking
 					if(mode == SEQALIGN_MODE_EDIT){
-						rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars);
+						rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, verbose);
 					} else {
 						rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
 					}
 				}
 				if(mode == SEQALIGN_MODE_EDIT){
-					rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars);
+					rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, verbose);
 				} else {
 					rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
 				}
