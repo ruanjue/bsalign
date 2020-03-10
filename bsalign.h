@@ -1,9 +1,5 @@
-#ifndef BAND_STRIPED_DNA_SEQ_ALIGNMENT_RJ_H
-#define BAND_STRIPED_DNA_SEQ_ALIGNMENT_RJ_H
-
-/**
- *
- * bsalign.h
+/*
+ * bsalign.h includes 'pairwise edit alignment', 'pairwise gap-weighting alignment' and 'graph alignment'
  *
  * Jue Ruan <ruanjue@gmail.com>
  *
@@ -14,77 +10,12 @@
  * Suzuki, Hajime, and Masahiro Kasahara. 2018. "Introducing Difference Recurrence Relations for Faster Semi-Global Alignment of Long Sequences." BMC Bioinformatics 19 (Suppl 1).
  * Li, Heng. 2018. "Minimap2: Pairwise Alignment for Nucleotide Sequences." Bioinformatics 34 (18): 3094¨C3100.
  *
- * My Algorithm = global/overlap alignment + striped vectorization + difference recurrence relation + adaptive banding + active F-loop
- * 
- * I compute the score matrix in the way of one row by one row, that is y always increases 1 in next call.
- * x is resorted into striped vector based on W and B.
- * B: number of values in a SIMD word, W = bandwidth / B.
- * When B = 4 and W = 2, there have
- * normal array     [0, 1, 2, 3, 4, 5, 6, 7]
- * striped blocks   [0, 2, 4, 6; 1, 3, 5, 7]
- * running blocks [0, 1; 2, 3; 4, 5; 6, 7]
- * In implementation, I use xint to store 16 int8_t, B = 16.
- * H, E, F, Q, G are the absolute scores
- * u, e, f, q, g are the relative scores
- * S is score for bases matching
- *
- * Important formulas:
- * H(x, y) = max(H(x - 1, y - 1) + S(x, y), E(x, y), Q(x, y), F(x, y), G(x, y))
- * u(x, y) = H(x, y) - H(x - 1, y)
- * h(x, y) = H(x, y) - H(x - 1, y - 1)
- * # vertical cross two rows
- * E(x, y) = max(E(x, y - 1) + gap_e, H(x, y - 1) + gap_o + gap_e)
- * e(x, y) = E(x, y) - H(x, y)
- * Q(x, y) = max(Q(x, y - 1) + gap_e2, H(x, y - 1) + gap_o2 + gap_e2)
- * q(x, y) = Q(x, y) - H(x, y)
- * # horizontal along a row
- * F(x, y) = max(F(x - 1, y) + gap_e, H(x - 1, y) + gap_o + gap_e)
- * f(x, y) = F(x, y) - H(x - 1, y - 1)
- * G(x, y) = max(G(x - 1, y) + gap_e2, H(x - 1, y) + gap_o2 + gap_e2)
- * g(x, y) = G(x, y) - H(x - 1, y - 1)
- *
- * Main steps
- * 1, shifting
- *  shuffling the previous row into be well aligned with current row, all in striped. See banded_striped_epi8_seqalign_piece2_row_mov
- *
- * 2, first pass of current row to obtain f(x, y) and g(x, y) of the last striped block
- *  S(x, y) can be load from prepared striped query profile
- *  load e and q from previous row
- *  f(0, y) = g(0, y) = MIN_INF
- *  h(x, y) = max(S(x, y), e(x, y), q(x, y), f(x, y), g(x, y))
- *  f(x + 1, y) = max(f(x, y) + gap_e, h(x, y) + gap_o + gap_e) + u(x, y - 1) // please note u(x, y - 1) = H(x, y - 1) - H(x - 1, y - 1)
- *  g(x + 1, y) = max(g(x, y) + gap_e2, h(x, y) + gap_o2 + gap_e2) + u(x, y - 1)
- *  sum_u[] = sum(u([], y - 1)) // summing u of each running block in previous row
- *
- * 3, active F-loop
- *  F was calculated within each running block, need to check whether F can update Hs/Fs in next one or more running blocks, call this F-penetration
- *  Imagining a bigger F that continous updates all following Hs/Fs to the very ending, traditional lazy F-loop algorithm will perform badly
- *  When doing global alignment, such like cases often happen. Active F-loop first updates all Fs at the very beggining of each running block,
- *  then there must be at most W loops instead of 16 * W.
- *  f[0] = MIN_INF // f[0] = {f(0, y), f(W, y), f(2 * W, y), ..., f((B - 1) * W, y)} in striped coordinate, f(0 ... B - 1, y) in normal coordinate
- *  f[i] = max(f[i], f[i - 1] + sum_u[i] + 16 * gap_e)
- *  g[0] = MIN_INF
- *  g[i] = max(g[i], g[i - 1] + sum_u[i] + 16 * gap_e2)
- *  Now, there will be no F-penetration
- *
- * 4, second pass of row to calculate scores
- *  ... // calculate h(x, y), and update e(x, y + 1), q(x, y + 1), f(x + 1, y), and g(x + 1, y)
- *  u(x, y) = h(x, y) - (h(x - 1, y) - u(x - 1, y)) // update u in the loop of striped blocks
- *
- * 5, find max score within a row
- *  H(x, y) = H(x - 1, y) + u(x, y)
- *
- * 6, adaptive band
- * if sum(H[0 .. W - 1]) > sum(H[15 * W .. 16 * W - 1])  row_offset = row_offset + 0 // in normal coordinate
- * if sum(H[0 .. W - 1]) == sum(H[15 * W .. 16 * W - 1]) row_offset = row_offset + 1
- * if sum(H[0 .. W - 1]) < sum(H[15 * W .. 16 * W - 1])  row_offset = row_offset + 2
- * keep the bandwidth, but shift the offset of band in this row for next call, see 1) shifting
+ * To use bsalign.h in your program, please copy bsalign.h, list.h, sort.h and mem_share.h together
  *
  */
 
-/*
- * To use bsalign.h in your program, please copy bsalign.h, list.h, sort.h and mem_share.h together
- */
+#ifndef BAND_STRIPED_DNA_SEQ_ALIGNMENT_RJ_H
+#define BAND_STRIPED_DNA_SEQ_ALIGNMENT_RJ_H
 
 #include "list.h"
 #include "sort.h"
@@ -99,7 +30,7 @@
 #define SEQALIGN_MODE_GLOBAL	0
 #define SEQALIGN_MODE_OVERLAP	1
 #define SEQALIGN_MODE_EXTEND	2
-#define SEQALIGN_MODE_EDIT		3
+#define SEQALIGN_MODE_EDIT		8
 
 #define SEQALIGN_BT_M	0
 #define SEQALIGN_BT_D	1
@@ -238,16 +169,83 @@ typedef struct {
  * Basic function referings for DNA alignment using edit distance, there are implementations in this file
  */
 
-//#define DEBUG_ED
-//#define DEBUG_ED_FULL
-
 #define striped_epi2_seqedit_getval(xs, W, pos) (((xs)[((((pos) % (W)) * WORDSIZE) + (((pos) / (W)) >> 3))] >> (((((pos) / ((W)))) & 0x7))) & 0x1)
 #define striped_epi2_seqedit_qprof_size(qlen) (roundup_times(qlen, WORDSIZE * 8) / 2)
 typedef void (*striped_epi2_seqedit_set_query_prof_func)(u1i *qseq, u4i qlen, b1i *qprof);
-typedef void (*striped_epi2_seqedit_row_init_func)(b1i *us[2], u4i W);
-typedef void (*striped_epi2_seqedit_row_cal_func)(b1i *us[2][2], b1i *hs, b1i *qprof, u4i W, u1i base);
-typedef seqalign_result_t (*striped_epi2_seqedit_backtrace_func)(b1i *uts[2], u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, u4v *cigars);
-static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int verbose);
+typedef void (*striped_epi2_seqedit_row_init_func)(b1i *us[2], u4i W, int mode);
+typedef void (*striped_epi2_seqedit_row_cal_func)(u4i rbeg, b1i *us[2][2], b1i *hs, b1i *qprof, u4i W, u1i base, int mode);
+typedef seqalign_result_t (*striped_epi2_seqedit_backtrace_func)(b1i *uts[2], u4i W, int mode, u1i *qseq, int qend, u1i *tseq, int tend, u4v *cigars);
+static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int mode, int verbose);
+
+/**
+ *
+ * My Algorithm = global/overlap alignment + striped vectorization + difference recurrence relation + adaptive banding + active F-loop
+ * 
+ * I compute the score matrix in the way of one row by one row, that is y always increases 1 in next call.
+ * x is resorted into striped vector based on W and B.
+ * B: number of values in a SIMD word, W = bandwidth / B.
+ * When B = 4 and W = 2, there have
+ * normal array     [0, 1, 2, 3, 4, 5, 6, 7]
+ * striped blocks   [0, 2, 4, 6; 1, 3, 5, 7]
+ * running blocks [0, 1; 2, 3; 4, 5; 6, 7]
+ * In implementation, I use xint to store 16 int8_t, B = 16.
+ * H, E, F, Q, G are the absolute scores
+ * u, e, f, q, g are the relative scores
+ * S is score for bases matching
+ *
+ * Important formulas:
+ * H(x, y) = max(H(x - 1, y - 1) + S(x, y), E(x, y), Q(x, y), F(x, y), G(x, y))
+ * u(x, y) = H(x, y) - H(x - 1, y)
+ * h(x, y) = H(x, y) - H(x - 1, y - 1)
+ * # vertical cross two rows
+ * E(x, y) = max(E(x, y - 1) + gap_e, H(x, y - 1) + gap_o + gap_e)
+ * e(x, y) = E(x, y) - H(x, y)
+ * Q(x, y) = max(Q(x, y - 1) + gap_e2, H(x, y - 1) + gap_o2 + gap_e2)
+ * q(x, y) = Q(x, y) - H(x, y)
+ * # horizontal along a row
+ * F(x, y) = max(F(x - 1, y) + gap_e, H(x - 1, y) + gap_o + gap_e)
+ * f(x, y) = F(x, y) - H(x - 1, y - 1)
+ * G(x, y) = max(G(x - 1, y) + gap_e2, H(x - 1, y) + gap_o2 + gap_e2)
+ * g(x, y) = G(x, y) - H(x - 1, y - 1)
+ *
+ * Main steps
+ * 1, shifting
+ *  shuffling the previous row into be well aligned with current row, all in striped. See banded_striped_epi8_seqalign_piece2_row_mov
+ *
+ * 2, first pass of current row to obtain f(x, y) and g(x, y) of the last striped block
+ *  S(x, y) can be load from prepared striped query profile
+ *  load e and q from previous row
+ *  f(0, y) = g(0, y) = MIN_INF
+ *  h(x, y) = max(S(x, y), e(x, y), q(x, y), f(x, y), g(x, y))
+ *  f(x + 1, y) = max(f(x, y) + gap_e, h(x, y) + gap_o + gap_e) + u(x, y - 1) // please note u(x, y - 1) = H(x, y - 1) - H(x - 1, y - 1)
+ *  g(x + 1, y) = max(g(x, y) + gap_e2, h(x, y) + gap_o2 + gap_e2) + u(x, y - 1)
+ *  sum_u[] = sum(u([], y - 1)) // summing u of each running block in previous row
+ *
+ * 3, active F-loop
+ *  F was calculated within each running block, need to check whether F can update Hs/Fs in next one or more running blocks, call this F-penetration
+ *  Imagining a bigger F that continous updates all following Hs/Fs to the very ending, traditional lazy F-loop algorithm will perform badly
+ *  When doing global alignment, such like cases often happen. Active F-loop first updates all Fs at the very beggining of each running block,
+ *  then there must be at most W loops instead of 16 * W.
+ *  f[0] = MIN_INF // f[0] = {f(0, y), f(W, y), f(2 * W, y), ..., f((B - 1) * W, y)} in striped coordinate, f(0 ... B - 1, y) in normal coordinate
+ *  f[i] = max(f[i], f[i - 1] + sum_u[i] + 16 * gap_e)
+ *  g[0] = MIN_INF
+ *  g[i] = max(g[i], g[i - 1] + sum_u[i] + 16 * gap_e2)
+ *  Now, there will be no F-penetration
+ *
+ * 4, second pass of row to calculate scores
+ *  ... // calculate h(x, y), and update e(x, y + 1), q(x, y + 1), f(x + 1, y), and g(x + 1, y)
+ *  u(x, y) = h(x, y) - (h(x - 1, y) - u(x - 1, y)) // update u in the loop of striped blocks
+ *
+ * 5, find max score within a row
+ *  H(x, y) = H(x - 1, y) + u(x, y)
+ *
+ * 6, adaptive band
+ * if sum(H[0 .. W - 1]) > sum(H[15 * W .. 16 * W - 1])  row_offset = row_offset + 0 // in normal coordinate
+ * if sum(H[0 .. W - 1]) == sum(H[15 * W .. 16 * W - 1]) row_offset = row_offset + 1
+ * if sum(H[0 .. W - 1]) < sum(H[15 * W .. 16 * W - 1])  row_offset = row_offset + 2
+ * keep the bandwidth, but shift the offset of band in this row for next call, see 1) shifting
+ *
+ */
 
 /**
  * Basic function referings for global/extend/overlap DNA sequence alignment, there are implementations in this file
@@ -337,12 +335,12 @@ static inline void striped_epi2_seqedit_set_query_prof(u1i *qseq, u4i qlen, b1i 
 					pos = y + x * W;
 					if(pos < qlen && qseq[pos] == i){
 						qp[0] |= 0x1 << ((x & 0x7));
-#ifdef DEBUG_ED
-						if(striped_epi2_seqedit_getval(qprof + i * W * WORDSIZE, W, pos) != 0x1){
-							fprintf(stderr, " -- something wrong i=%d j=%d k=%d x=%d pos=%d in %s -- %s:%d --\n", i, j, k, x, pos, __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-							abort();
+						if(0){
+							if(striped_epi2_seqedit_getval(qprof + i * W * WORDSIZE, W, pos) != 0x1){
+								fprintf(stderr, " -- something wrong i=%d j=%d k=%d x=%d pos=%d in %s -- %s:%d --\n", i, j, k, x, pos, __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+								abort();
+							}
 						}
-#endif
 					}
 				}
 				qp ++;
@@ -351,11 +349,12 @@ static inline void striped_epi2_seqedit_set_query_prof(u1i *qseq, u4i qlen, b1i 
 	}
 }
 
-static inline void striped_epi2_seqedit_row_init(b1i *us[2], u4i W){
+static inline void striped_epi2_seqedit_row_init(b1i *us[2], u4i W, int mode){
 	xint BIT0, BIT1;
 	u4i i;
-	// 01
+	UNUSED(mode);
 	BIT0 = mm_set1_epi8(0x00);
+	//BIT1 = mm_set1_epi8((mode == SEQALIGN_MODE_OVERLAP)? 0x00 : 0xFF);
 	BIT1 = mm_set1_epi8(0xFF);
 	for(i=0;i<W;i++){
 		mm_store(((xint*)us[0]) + i, BIT0);
@@ -396,25 +395,25 @@ static inline void print_epi2_row(u1i tbase, b1i *us[2], u4i W){
 }
 
 // global DNA edit distance
-static inline void striped_epi2_seqedit_row_cal(b1i *us[2][2], b1i *hs, b1i *qprof, u4i W, u1i base){
+// rbeg == 0
+static inline void striped_epi2_seqedit_row_cal(u4i rbeg, b1i *us[2][2], b1i *hs, b1i *qprof, u4i W, u1i base, int mode){
 	xint s, u1, u2, u3, u4, v1, v2, h, h2, BIT0, BIT1, BMSK;
 	u4i i, running;
+	UNUSED(rbeg);
+	UNUSED(mode);
 	BIT0 = mm_set1_epi8(0x00);
 	BIT1 = mm_set1_epi8(0xFF);
 	BMSK = mm_srli(mm_set1_epi8(0x1), WORDSIZE - 1);
 	v1 = BIT0;
 	v2 = BIT1;
 	for(i=0;i<W;i++){
-	inline void row_cal_sub1(){
 		// set s = 0/1 = 10/00
+		//s  = mm_load(((xint*)qprof) + (rbeg + i) * 4 + base);
 		s  = mm_load(((xint*)qprof) + base * W + i);
 		// u = H(x, y - 1) - H(x - 1, y - 1) = -1/0/1 = 10/00/01
 		// v = H(x - 1, y) - H(x - 1, y - 1) = 10/00/01
 		u1  = mm_load(((xint*)us[0][0]) + i);
 		u2  = mm_load(((xint*)us[0][1]) + i);
-	}
-		row_cal_sub1();
-	inline void row_cal_sub2(){
 		// H(x, y) = H(x - 1, y - 1) + min(s, u + 1, v + 1)
 		// h = H(x, y) - H(x - 1, y - 1) = min(s, u + 1, v + 1) = 0/1
 		//    s       u       v   =    h
@@ -462,54 +461,7 @@ static inline void striped_epi2_seqedit_row_cal(b1i *us[2][2], b1i *hs, b1i *qpr
 		// the same will be with v' = h - u
 		u3 = mm_andnot(h, v2);
 		u4 = mm_xor(v2, mm_or(h, mm_or(v1, v2)));
-#ifdef DEBUG_ED_FULL
-		fprintf(stdout, "i  = %d\n", i);
-		fprintf(stdout, "s  = "); fprint_striped_epi1_word(stdout, s); fprintf(stdout, "\n");
-		fprintf(stdout, "u1 = "); fprint_striped_epi1_word(stdout, u1); fprintf(stdout, "\n");
-		fprintf(stdout, "u2 = "); fprint_striped_epi1_word(stdout, u2); fprintf(stdout, "\n");
-		fprintf(stdout, "v1 = "); fprint_striped_epi1_word(stdout, v1); fprintf(stdout, "\n");
-		fprintf(stdout, "v2 = "); fprint_striped_epi1_word(stdout, v2); fprintf(stdout, "\n");
-		fprintf(stdout, "h  = "); fprint_striped_epi1_word(stdout,  h); fprintf(stdout, "\n");
-		fprintf(stdout, "u3 = "); fprint_striped_epi1_word(stdout, u3); fprintf(stdout, "\n");
-		fprintf(stdout, "u4 = "); fprint_striped_epi1_word(stdout, u4); fprintf(stdout, "\n");
-#endif
-		v1 = mm_andnot(h, u2);
-		v2 = mm_xor(u2, mm_or(h, mm_or(u1, u2)));
-	}
-		row_cal_sub2();
-	inline void row_cal_sub3(){
-		mm_store(((xint*)hs) + i, h);
-		mm_store(((xint*)us[1][0]) + i, u3);
-		mm_store(((xint*)us[1][1]) + i, u4);
-	}
-		row_cal_sub3();
-		//print_epi2_row(base, us[1], W);
-	}
-	running = 1;
-	while(running){
-		//fprintf(stdout, "\nv1 = "); fprint_striped_epi1_word(stdout, v1); fprintf(stdout, "\n");
-		//fprintf(stdout, "v2 = "); fprint_striped_epi1_word(stdout, v2); fprintf(stdout, "\n");
-		v1 = mm_sl1bit(v1);
-		v2 = mm_or(mm_sl1bit(v2), BMSK);
-		//fprintf(stdout, "v1 = "); fprint_striped_epi1_word(stdout, v1); fprintf(stdout, "\n");
-		//fprintf(stdout, "v2 = "); fprint_striped_epi1_word(stdout, v2); fprintf(stdout, "\n");
-		//fprintf(stdout, "#\n");
-		for(i=0;i<W;i++){
-			s   = mm_load(((xint*)qprof) + base * W + i);
-			h2  = mm_load(((xint*)hs) + i);
-			u1  = mm_load(((xint*)us[0][0]) + i);
-			u2  = mm_load(((xint*)us[0][1]) + i);
-			h   = mm_andnot(mm_or(s, mm_or(u1, v1)), BIT1);
-			//fprintf(stdout, "hold = "); fprint_striped_epi1_word(stdout, h2); fprintf(stdout, "\n");
-			//fprintf(stdout, "hnew = "); fprint_striped_epi1_word(stdout,  h); fprintf(stdout, "\n");
-			u3 = mm_andnot(h, v2);
-			u4 = mm_xor(v2, mm_or(h, mm_or(v1, v2)));
-			v1 = mm_andnot(h, u2);
-			v2 = mm_xor(u2, mm_or(h, mm_or(u1, u2)));
-			mm_store(((xint*)hs) + i, h);
-			mm_store(((xint*)us[1][0]) + i, u3);
-			mm_store(((xint*)us[1][1]) + i, u4);
-#ifdef DEBUG_ED_FULL
+		if(0){
 			fprintf(stdout, "i  = %d\n", i);
 			fprintf(stdout, "s  = "); fprint_striped_epi1_word(stdout, s); fprintf(stdout, "\n");
 			fprintf(stdout, "u1 = "); fprint_striped_epi1_word(stdout, u1); fprintf(stdout, "\n");
@@ -519,7 +471,35 @@ static inline void striped_epi2_seqedit_row_cal(b1i *us[2][2], b1i *hs, b1i *qpr
 			fprintf(stdout, "h  = "); fprint_striped_epi1_word(stdout,  h); fprintf(stdout, "\n");
 			fprintf(stdout, "u3 = "); fprint_striped_epi1_word(stdout, u3); fprintf(stdout, "\n");
 			fprintf(stdout, "u4 = "); fprint_striped_epi1_word(stdout, u4); fprintf(stdout, "\n");
-#endif
+		}
+		v1 = mm_andnot(h, u2);
+		v2 = mm_xor(u2, mm_or(h, mm_or(u1, u2)));
+		mm_store(((xint*)hs) + i, h);
+		mm_store(((xint*)us[1][0]) + i, u3);
+		mm_store(((xint*)us[1][1]) + i, u4);
+		//print_epi2_row(base, us[1], W);
+	}
+	running = 1;
+	while(running){
+		v1 = mm_sl1bit(v1);
+		v2 = mm_sl1bit(v2);
+		if(mode != SEQALIGN_MODE_OVERLAP){
+			v2 = mm_or(v2, BMSK);
+		}
+		for(i=0;i<W;i++){
+			//s   = mm_load(((xint*)qprof) + (rbeg + i) * 4 + base);
+			s   = mm_load(((xint*)qprof) + base * W + i);
+			h2  = mm_load(((xint*)hs) + i);
+			u1  = mm_load(((xint*)us[0][0]) + i);
+			u2  = mm_load(((xint*)us[0][1]) + i);
+			h   = mm_andnot(mm_or(s, mm_or(u1, v1)), BIT1);
+			u3 = mm_andnot(h, v2);
+			u4 = mm_xor(v2, mm_or(h, mm_or(v1, v2)));
+			v1 = mm_andnot(h, u2);
+			v2 = mm_xor(u2, mm_or(h, mm_or(u1, u2)));
+			mm_store(((xint*)hs) + i, h);
+			mm_store(((xint*)us[1][0]) + i, u3);
+			mm_store(((xint*)us[1][1]) + i, u4);
 			//print_epi2_row(base, us[1], W);
 			//when there is nothing to update, break
 			if(!mm_movemask_epi8(mm_andnot(mm_cmpeq_epi8(h2, h), BIT1))){
@@ -530,16 +510,13 @@ static inline void striped_epi2_seqedit_row_cal(b1i *us[2][2], b1i *hs, b1i *qpr
 	}
 }
 
-static inline seqalign_result_t striped_epi2_seqedit_backtrace(b1i *uts[2], u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, u4v *cigars){
+static inline seqalign_result_t striped_epi2_seqedit_backtrace(b1i *uts[2], u4i W, int mode, u1i *qseq, int x, u1i *tseq, int y, u4v *cigars){
 	seqalign_result_t rs;
-	u4i W, cg, op;
-	int x, y, u1, u2, u3, u4;
+	u4i cg, op;
+	int u1, u2, u3, u4;
 	ZEROS(&rs);
-	rs.qe = qlen;
-	rs.te = tlen;
-	W = roundup_times(qlen, WORDSIZE * 8) / (WORDSIZE * 8);
-	x = qlen - 1;
-	y = tlen - 1;
+	rs.qe = x + 1;
+	rs.te = y + 1;
 	if(cigars) clear_u4v(cigars);
 	cg = op = 0;
 	while(x >= 0 && y >= 0){
@@ -588,33 +565,38 @@ static inline seqalign_result_t striped_epi2_seqedit_backtrace(b1i *uts[2], u1i 
 	}
 	rs.qb = x + 1;
 	rs.tb = y + 1;
+	if(mode == SEQALIGN_MODE_OVERLAP){
+	} else {
+		if(rs.qb){
+			op = 1;
+			if(op == (cg & 0xf)){
+				cg += 0x10 * rs.qb;
+			} else {
+				if(cg && cigars) push_u4v(cigars, cg);
+				cg = (0x10 * rs.qb) | op;
+			}
+			rs.ins += rs.qb;
+			rs.qb = 0;
+		}
+		if(rs.tb){
+			op = 2;
+			if(op == (cg & 0xf)){
+				cg += 0x10 * rs.tb;
+			} else {
+				if(cg && cigars) push_u4v(cigars, cg);
+				cg = (0x10 * rs.tb) | op;
+			}
+			rs.del += rs.tb;
+			rs.tb = 0;
+		}
+	}
 	rs.aln = rs.mat + rs.mis + rs.ins + rs.del;
-	if(rs.qb){
-		op = 1;
-		if(op == (cg & 0xf)){
-			cg += 0x10 * rs.qb;
-		} else {
-			if(cg && cigars) push_u4v(cigars, cg);
-			cg = (0x10 * rs.qb) | op;
-		}
-		rs.qb = 0;
-	}
-	if(rs.tb){
-		op = 2;
-		if(op == (cg & 0xf)){
-			cg += 0x10 * rs.tb;
-		} else {
-			if(cg && cigars) push_u4v(cigars, cg);
-			cg = (0x10 * rs.tb) | op;
-		}
-		rs.tb = 0;
-	}
 	if(cg && cigars) push_u4v(cigars, cg);
 	if(cigars) reverse_u4v(cigars);
 	return rs;
 }
 
-static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int verbose){
+static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int mode, int verbose){
 	striped_epi2_seqedit_set_query_prof_func set_qprof;
 	striped_epi2_seqedit_row_init_func       row_init;
 	striped_epi2_seqedit_row_cal_func        row_cal;
@@ -622,7 +604,8 @@ static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qle
 	seqalign_result_t rs;
 	b1i *memp, *mempb, *qprof, *uts[2], *us[2][2], *hs;
 	u8i mpsize;
-	u4i i, W;
+	u4i i, j, W;
+	int rx, ry, sbeg, smin, score, cnts[2];
 	set_qprof = striped_epi2_seqedit_set_query_prof;
 	row_cal   = striped_epi2_seqedit_row_cal;
 	row_init  = striped_epi2_seqedit_row_init;
@@ -650,19 +633,37 @@ static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qle
 	us[0][1] = uts[1];
 	QSEQ = qseq;
 	QLEN = qlen;
-	row_init(us[0], W);
+	rx   = qlen - 1;
+	ry   = tlen - 1;
+	smin = MAX_B4;
+	row_init(us[0], W, mode);
 	for(i=0;i<tlen;i++){
-		SCORE = i + 1;
+		sbeg = (mode == SEQALIGN_MODE_OVERLAP)? 0 : i + 1;
+		SCORE = sbeg;
 		us[0][0] = uts[0] + (i + 0) * W * WORDSIZE;
 		us[0][1] = uts[1] + (i + 0) * W * WORDSIZE;
 		us[1][0] = uts[0] + (i + 1) * W * WORDSIZE;
 		us[1][1] = uts[1] + (i + 1) * W * WORDSIZE;
-		row_cal(us, hs, qprof, W, tseq[i]);
+		row_cal(0, us, hs, qprof, W, tseq[i], mode);
+		if(mode == SEQALIGN_MODE_OVERLAP){
+			cnts[0] = cnts[1] = 0;
+			for(j=0;j<W*(WORDSIZE/8);j++){ // padding cells at the end should be the same between rows
+				cnts[0] += __builtin_popcountll(((u8i*)us[1][0])[j]);
+				cnts[1] += __builtin_popcountll(((u8i*)us[1][1])[j]);
+			}
+			score = sbeg + cnts[1] - cnts[0];
+			if(score < smin){
+				smin = score;
+				rx   = qlen - 1;
+				ry   = i;
+			}
+		}
 		if(verbose){
 			int vals[2][2] = {{0, 1}, {-1, 2}};
-			int j, b1, b2, u, u2, v, v2, score;
-			score = i + 1;
-			v2 = 1;
+			int j, b1, b2, u, u2, v, v2, score, error;
+			score = (mode == SEQALIGN_MODE_OVERLAP)? 0 : i + 1;
+			v2    = (mode == SEQALIGN_MODE_OVERLAP)? 0 : 1;
+			error = 0;
 			fprintf(stdout, "[%04d:%c]\t", i, "ACGTN"[tseq[i]]);
 			for(j=0;j<Int(qlen);j++){
 				b1 = striped_epi2_seqedit_getval(us[0][0], W, j);
@@ -678,19 +679,19 @@ static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qle
 				}
 				b1 = striped_epi2_seqedit_getval(us[1][0], W, j);
 				b2 = striped_epi2_seqedit_getval(us[1][1], W, j);
-				if(u2 != vals[b1][b2]){
+				if(error == 0 && u2 != vals[b1][b2]){
 					fflush(stdout);
 					fprintf(stderr, " -- j=%d s=%c%c u=%d v=%d u2=%d should be %d in %s -- %s:%d --\n", j, "ACGTN"[qseq[j]], "ACGTN"[tseq[i]], u, v, vals[b1][b2], u2, __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-					abort();
+					error = 1;
 				}
 				if(b1 == 0 && b2 == 1) score ++;
 				else if(b1 == 1 && b2 == 0) score --;
-				fprintf(stdout, "%c%03d:%c:%c ", "ACGTN"[qseq[j]], score, "-0+"[vals[b1][b2] + 1], "-0+"[v2 + 1]);
+				fprintf(stdout, "%c%03d:%c:%c ", "ACGTN"[qseq[j]], score, "-*+"[vals[b1][b2] + 1], "-*+"[v2 + 1]);
 			}
 			fprintf(stdout, "\n");
 		}
 	}
-	rs = backtrace(uts, qseq, qlen, tseq, tlen, cigars);
+	rs = backtrace(uts, W, mode, qseq, rx, tseq, ry, cigars);
 	if(mempb) free(mempb);
 	return rs;
 }

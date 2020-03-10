@@ -1,7 +1,6 @@
 #include "dna.h"
 #include "filereader.h"
 #include "bsalign.h"
-//#include "bspoa.h"
 #include <stdlib.h>
 
 int usage(){
@@ -13,7 +12,8 @@ int usage(){
 	"Usage: bsalign [options]\n"
 	"options:\n"
 	" -h          Show this document\n"
-	" -m <string> align mode: global, extend, overlap, edit [overlap]\n"
+	" -m <string> align mode: {global/extend/*overlap*},{edit/*align*} [overlap,align]\n"
+	"             edit,overlap requires whole length of query sequence in alignment\n"
 	" -W <int>    Bandwidth, 0: full length of query [0]\n"
 	" -M <int>    Score for match, [2]\n"
 	" -X <int>    Penalty for mismatch, [6]\n"
@@ -38,6 +38,7 @@ int main(int argc, char **argv){
 	FileReader *fr;
 	SeqBank *seqs;
 	BioSequence *seq;
+	char *str, *tok;
 	int c, mode, _W, W, mat, mis, gapo1, gape1, gapo2, gape2, repm, repn, verbose;
 	mode = SEQALIGN_MODE_OVERLAP;
 	_W = 0;
@@ -49,11 +50,18 @@ int main(int argc, char **argv){
 			case 'h': return usage();
 			case 'v': verbose ++; break;
 			case 'm':
-			if(strcasecmp(optarg, "GLOBAL") == 0) mode = SEQALIGN_MODE_GLOBAL;
-			else if(strcasecmp(optarg, "EXTEND") == 0) mode = SEQALIGN_MODE_EXTEND;
-			else if(strcasecmp(optarg, "OVERLAP") == 0) mode = SEQALIGN_MODE_OVERLAP;
-			else if(strcasecmp(optarg, "EDIT") == 0) mode = SEQALIGN_MODE_EDIT;
-			else return usage();
+			str = optarg;
+			while(str && *str){
+				tok = index(str, ','); if(tok) *tok = '\0';
+				if(strcasecmp(str, "GLOBAL") == 0) mode = (mode & 0xF8) | SEQALIGN_MODE_GLOBAL;
+				else if(strcasecmp(str, "EXTEND") == 0) mode = (mode & 0xF8) | SEQALIGN_MODE_EXTEND;
+				else if(strcasecmp(str, "OVERLAP") == 0) mode = (mode & 0xF8) | SEQALIGN_MODE_OVERLAP;
+				else if(strcasecmp(str, "EDIT") == 0) mode = (mode & 0x7) | SEQALIGN_MODE_EDIT;
+				else if(strcasecmp(str, "ALIGN") == 0) mode = mode & 0x7;
+				else return usage();
+				if(tok) str = tok + 1;
+				else break;
+			}
 			break;
 			case 'W': _W = atoi(optarg); break;
 			case 'M': mat = atoi(optarg); break;
@@ -98,16 +106,16 @@ int main(int argc, char **argv){
 				bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[1], seqs->rdlens->buffer[1], tseq->buffer);
 				tseq->size = seqs->rdlens->buffer[1];
 				for(repn=1;repn<repm;repn++){ // for benchmarking
-					if(mode == SEQALIGN_MODE_EDIT){
-						rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, verbose);
+					if(mode & SEQALIGN_MODE_EDIT){
+						rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode & 0x7, verbose);
 					} else {
-						rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
+						rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode & 0x7, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
 					}
 				}
-				if(mode == SEQALIGN_MODE_EDIT){
-					rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, verbose);
+				if(mode & SEQALIGN_MODE_EDIT){
+					rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode & 0x7, verbose);
 				} else {
-					rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
+					rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode & 0x7, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
 				}
 				if(rs.mat){
 					if(strn < rs.aln){
