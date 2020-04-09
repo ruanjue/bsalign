@@ -27,7 +27,7 @@ PROGS=bsalign
 
 all: $(PROGS)
 
-bsalign: $(GENERIC_SRC) bsalign.h main.c
+bsalign: $(GENERIC_SRC) bsalign.h bspoa.h main.c
 	$(CC) $(CFLAGS) -o $@ main.c $(GLIBS)
 
 clean:
