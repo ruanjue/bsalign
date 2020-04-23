@@ -17,9 +17,10 @@ int usage(){
 	" -m <string> align mode: {global/extend/*overlap*},{edit/*align*/poa} [overlap,align]\n"
 	"             edit mode is to find minimal DNA edit distance, no other option\n"
 	"             align mode is normal pairwise sequence alignment, supposes options -W/M/X/O/E/Q/P\n"
-	"             poa mode is multiple sequences alignment, supposes options -M/X/O/E/Q/P\n"
+	"             poa mode is multiple sequences alignment, supposes options -W/M/X/O/E/Q/P and -G\n"
 	"             accepts 'edit,global', 'poa,extend' and others\n"
 	" -W <int>    Bandwidth, 0: full length of query [0]\n"
+	"             in POA mode, default option -W 128, see -G tigger=10\n"
 	" -M <int>    Score for match, [2]\n"
 	" -X <int>    Penalty for mismatch, [6]\n"
 	" -O <int>    Penalty for gap open, [3]\n"
@@ -27,13 +28,14 @@ int usage(){
 	" -Q <int>    Penalty for gap2 open, [8]\n"
 	" -P <int>    Penalty for gap2 extension, [1]\n"
 	" -G <sting>  parameters for POA, <tag>=<val>\n"
-	"             Detaults: nrec=20,refmode=0,psub=0.05,pins=0.05,pdel=0.05,pext=0.50,hins=0.15,hdel=0.25\n"
+	"             Defaults: tigger=10,nrec=20,refmode=0,psub=0.05,pins=0.05,pdel=0.05,pext=0.50,hins=0.15,hdel=0.25\n"
+	"              tigger: when <tigger> > 0 and <-W> < query length, genrates CNS per after <tigger> reads, and tigger banded alignment\n"
 	"              nrec: every query read is aligning against previous <nrec> reads on graph, 0 to all the previous\n"
 	"              ref: whether the first sequences is reference sequence, useful in polishing\n"
 	"              psub/pins/pdel/pext: probs. of mis/ins/del/ext\n"
 	"              hins/hdel: probs of ins/del in homopolymer region\n"
 	"             To polish long reads' consensus with short reads, you might set\n"
-	"              -G refmode=1,nrec=0,psub=0.02,pins=0.005,pdel=0.005,pext=0.002,hins=0.005,hdel=0.005\n"
+	"              -G refmode=1,tigger=0,nrec=0,psub=0.02,pins=0.005,pdel=0.005,pext=0.002,hins=0.005,hdel=0.005\n"
 	" -R <int>    repeat times (for benchmarking) [1]\n"
 	" -v          Verbose\n"
 	"\n", TOSTR(VERSION)
@@ -82,7 +84,7 @@ int main(int argc, char **argv){
 				else break;
 			}
 			break;
-			case 'W': _W = atoi(optarg); break;
+			case 'W': par.bandwidth = _W = atoi(optarg); break;
 			case 'M': par.M = mat = atoi(optarg); break;
 			case 'X': par.X = mis = - atoi(optarg); break;
 			case 'O': par.O = gapo1 = - atoi(optarg); break;
@@ -100,6 +102,7 @@ int main(int argc, char **argv){
 					else if(strncasecmp("hins", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.hins = atof(str + mats[2].rm_so);
 					else if(strncasecmp("hdel", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.hdel = atof(str + mats[2].rm_so);
 					else if(strncasecmp("nrec", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.nrec = atof(str + mats[2].rm_so);
+					else if(strncasecmp("tigger", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.bwtigger = atof(str + mats[2].rm_so);
 					else if(strncasecmp("refmode", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.refmode = atoi(str + mats[2].rm_so);
 					str += mats[0].rm_eo;
 				}
@@ -108,6 +111,7 @@ int main(int argc, char **argv){
 			default: return usage();
 		}
 	}
+	regfree(&reg);
 	fr = open_filereader(NULL, 0);
 	seqs = init_seqbank();
 	seq = init_biosequence();
