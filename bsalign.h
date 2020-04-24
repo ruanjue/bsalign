@@ -739,7 +739,7 @@ static inline void striped_epi2_seqedit_row_merge(u2i sbegs[2], b1i *us[3][2], b
 	}
 	sub_print_3hs(-1);
 #endif
-	void striped_epi2_seqedit_row_merge_core_2(const int shift){
+	__attribute__((unused)) void striped_epi2_seqedit_row_merge_core_2(const int shift){
 		xint MASK, ONES, A, B, S, C, D;
 		MASK = mm_set1_epi8(0x11);
 		ONES = mm_set1_epi8(0x0F);
@@ -1995,9 +1995,9 @@ static inline int banded_striped_epi8_seqalign_piece2_row_cal(u4i rbeg, u1i base
 }
 
 static inline int banded_striped_epi8_seqalign_piecex_row_cal(u4i rbeg, u1i base, b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs[2], b1i *qprof, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, u4i W, u4i mov, int rh, int piecewise){
-	if(piecewise == 2) return banded_striped_epi8_seqalign_piece2_row_cal(rbeg, base, us, es, qs, ubegs, qprof, gapo1, gape1, gapo2, gape2, W, mov, rh);
-	if(piecewise == 1) return banded_striped_epi8_seqalign_piece1_row_cal(rbeg, base, us, es, qs, ubegs, qprof, gapo1, gape1, gapo2, gape2, W, mov, rh);
-	                   return banded_striped_epi8_seqalign_piece0_row_cal(rbeg, base, us, es, qs, ubegs, qprof, gapo1, gape1, gapo2, gape2, W, mov, rh);
+	if(piecewise == 2)      return banded_striped_epi8_seqalign_piece2_row_cal(rbeg, base, us, es, qs, ubegs, qprof, gapo1, gape1, gapo2, gape2, W, mov, rh);
+	else if(piecewise == 1) return banded_striped_epi8_seqalign_piece1_row_cal(rbeg, base, us, es, qs, ubegs, qprof, gapo1, gape1, gapo2, gape2, W, mov, rh);
+	else                    return banded_striped_epi8_seqalign_piece0_row_cal(rbeg, base, us, es, qs, ubegs, qprof, gapo1, gape1, gapo2, gape2, W, mov, rh);
 }
 
 static inline u4i banded_striped_epi8_seqalign_row_max(b1i *us, int *ubegs, u4i W, int *max_score){
