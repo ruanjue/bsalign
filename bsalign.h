@@ -1044,6 +1044,8 @@ static inline void banded_striped_epi8_seqalign_set_query_prof(u1i *qseq, u4i ql
 	}
 }
 
+#if 0
+
 static inline void banded_striped_epi8_seqalign_piecex_row_check_ubegs(b1i *us, int *ubegs, int W){
 	int i, j, sc;
 	sc = ubegs[0];
@@ -1056,6 +1058,12 @@ static inline void banded_striped_epi8_seqalign_piecex_row_check_ubegs(b1i *us, 
 	}
 }
 
+#else
+
+#define banded_striped_epi8_seqalign_piecex_row_check_ubegs(us, ubegs, W) 
+
+#endif
+
 // movx can be any value
 static inline void banded_striped_epi8_seqalign_piecex_row_movx(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs[2], u4i W, u4i movx, int piecewise, b1i nt_min, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2){
 	xint u, x, UBS[4], SHUFF1, SHUFF2;
@@ -1065,7 +1073,7 @@ static inline void banded_striped_epi8_seqalign_piecex_row_movx(b1i *us[2], b1i 
 	fflush(stdout); fprintf(stderr, " -- Cannot work with AVX2 in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
 	abort();
 #endif
-	//banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[1], ubegs[1], W);
+	banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[1], ubegs[1], W);
 	if(movx >= W * WORDSIZE){
 		memset(us[0], 0, W * WORDSIZE);
 		if(piecewise) memset(es[0], 0, W * WORDSIZE);
@@ -1169,7 +1177,7 @@ static inline void banded_striped_epi8_seqalign_piecex_row_movx(b1i *us[2], b1i 
 			memmove(ubegs[0], ubegs[1] + cyc, (WORDSIZE - cyc) * sizeof(int));
 		}
 		for(i=WORDSIZE-cyc;i<=WORDSIZE;i++) ubegs[0][i] = ubegs[1][WORDSIZE];
-		//banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[0], ubegs[0], W);
+		banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[0], ubegs[0], W);
 		// mimic insertions, make sure 1) the max score in next row never come from this overhang, 2) the difference value with next row never overflow EPI8
 		if(piecewise == 2) d = (gapo1 - gapo2) / (gape2 - gape1);
 		else d = W * WORDSIZE + 1;
@@ -1203,7 +1211,7 @@ static inline void banded_striped_epi8_seqalign_piecex_row_movx(b1i *us[2], b1i 
 			ubegs[0][b + 1] += c;
 			a = 0;
 		}
-		//banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[0], ubegs[0], W);
+		banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[0], ubegs[0], W);
 	}
 }
 
@@ -1290,8 +1298,8 @@ static inline void banded_striped_epi8_seqalign_piecex_row_mov(b1i *us[2], b1i *
 static inline void banded_striped_epi8_seqalign_piecex_row_merge(b1i *us[3], b1i *es[3], b1i *qs[3], int *ubegs[3], u4i W, int piecewise){
 	xint s[2][4], t[2][2], m[2][2], u[2], x[2][2];
 	u4i i, ie, j, k, p;
-	//banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[0], ubegs[0], W);
-	//banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[1], ubegs[1], W);
+	banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[0], ubegs[0], W);
+	banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[1], ubegs[1], W);
 	for(k=0;k<2;k++){
 		for(j=0;j<4;j++){
 			s[k][j] = mm_load(((xint*)ubegs[k]) + j);
@@ -1428,7 +1436,7 @@ static inline void banded_striped_epi8_seqalign_piecex_row_merge(b1i *us[3], b1i
 			s[1][3] = mm_add_epi32(s[1][3], mm_cvtepi16x1_epi32(t[1][1]));
 		}
 	}
-	//banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[2], ubegs[2], W);
+	banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[2], ubegs[2], W);
 }
 
 static inline int banded_striped_epi8_seqalign_piecex_row_cal_tail_codes(xint h, xint u, xint v, b1i *us[2], b1i *fs, int *ubegs[2], u4i W){
@@ -1447,7 +1455,7 @@ static inline int banded_striped_epi8_seqalign_piecex_row_cal_tail_codes(xint h,
 	// shift score to fit EPI8
 	ubegs[1][0] = ubegs[0][0] + us[1][0];
 	us[1][0] = 0;
-	//banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[1], ubegs[1], W);
+	banded_striped_epi8_seqalign_piecex_row_check_ubegs(us[1], ubegs[1], W);
 	return ubegs[1][0];
 }
 
