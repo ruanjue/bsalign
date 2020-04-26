@@ -796,7 +796,8 @@ static inline void prepare_rd_align_bspoa(BSPOA *g, u2i rid){
 		// cigar2rpos
 		clear_and_encap_b1v(g->memp, (g->cns->size + 1) * sizeof(u2i));
 		rmap = (u2i*)g->memp->buffer;
-		for(i=0;Int(i)<rs.tb;i++) rmap[i] = (rs.qb - 1) / (rs.tb - i);
+		rmap[0] = 0;
+		for(i=1;Int(i)<rs.tb;i++) rmap[i] = (rs.qb - 1) / (rs.tb - i);
 		x = rs.qb;
 		y = rs.tb;
 		for(i=0;i<g->stack->size;i++){
@@ -973,9 +974,6 @@ static inline void dpalign_row_update_bspoa(BSPOA *g, u4i mmidx1, u4i mmidx2, u4
 	__builtin_prefetch(us[0], 0);
 	dpalign_row_prepare_data(g, mmidx1, us + 1, es + 1, qs + 1, ubegs + 1);
 	__builtin_prefetch(us[1], 1);
-	//if(mmidx1 == 1824 && mmidx2 == 1385 && qoff1 == 23 && qoff2 == 24){
-		//fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-	//}
 	banded_striped_epi8_seqalign_piecex_row_movx(us, es, qs, ubegs, W, qoff2 - qoff1, g->piecewise, g->par->X, g->par->O, g->par->E, g->par->Q, g->par->P);
 	dpalign_row_prepare_data(g, mmidx2, us + 1, es + 1, qs + 1, ubegs + 1);
 	if(qoff1 == qoff2){
@@ -1080,14 +1078,28 @@ static inline int _alignment2graph_bspoa(BSPOA *g, u4i rid, u4i midx, int xe, in
 		Hs[1] = banded_striped_epi8_seqalign_getscore(us, ubegs, W, x - n->rpos);
 		eidx = n->erev;
 		clear_u4v(g->stack);
-		s = g->matrix[g->qseq->buffer[x] * 4 + n->base];
 		while(eidx){
 			e = ref_bspoaedgev(g->edges, eidx);
 			eidx = e->next;
 			w = ref_bspoanodev(g->nodes, e->node);
 			if(w->state == 0) continue;
 			dpalign_row_prepare_data(g, w->mmidx, &us, &es, &qs, &ubegs);
-			Hs[0] = (x > w->rpos)? banded_striped_epi8_seqalign_getscore(us, ubegs, W, x - w->rpos - 1) : ubegs[0];
+			s = g->matrix[g->qseq->buffer[x] * 4 + n->base];
+			if(x < w->rpos || x > Int(g->bandwidth + w->rpos)){
+				push_u4v(g->stack, e->node);
+				push_u4v(g->stack, SEQALIGN_SCORE_MIN);
+				push_u4v(g->stack, SEQALIGN_SCORE_MIN);
+				push_u4v(g->stack, SEQALIGN_SCORE_MIN);
+				continue;
+			} else if(x == w->rpos){
+				Hs[0] = ubegs[0];
+				if(w->rpos == 0 && (g->par->alnmode == SEQALIGN_MODE_OVERLAP || offset_bspoanodev(g->nodes, w) == BSPOA_HEAD_NODE)){
+				} else {
+					s = SEQALIGN_SCORE_MIN;
+				}
+			} else {
+				Hs[0] = banded_striped_epi8_seqalign_getscore(us, ubegs, W, x - w->rpos - 1);
+			}
 			t = ((x - w->rpos) % W) * WORDSIZE + ((x - w->rpos) / W);
 			push_u4v(g->stack, e->node);
 			push_u4v(g->stack, UInt(Hs[0] + s));
@@ -1140,6 +1152,9 @@ static inline int _alignment2graph_bspoa(BSPOA *g, u4i rid, u4i midx, int xe, in
 				add_char_string(alnstrs[0], bit_base_table[u->base&0x03]);
 				add_char_string(alnstrs[1], '-');
 				add_char_string(alnstrs[2], '-');
+			}
+			if(x == 27 && rid == 10){
+				fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
 			}
 			x --;
 			v = u;
@@ -1194,6 +1209,9 @@ static inline int align_rd_bspoacore(BSPOA *g, u2i rid){
 					fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
 					abort();
 				}
+				//if(rid == 1826 && u->mmidx == 2 && mmidx == 2246){
+					//fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+				//}
 				dpalign_row_update_bspoa(g, u->mmidx, mmidx, u->rpos, v->rpos, v->base);
 				if(v->vst){
 					dpalign_row_merge_bspoa(g, mmidx, v->mmidx);
@@ -1537,7 +1555,7 @@ static inline float cns_bspoa(BSPOA *g){
 static inline void end_bspoa(BSPOA *g){
 	bspoanode_t *u, *v;
 	bspoaedge_t *e;
-	u4i i, nidx, reflen, margin;
+	u4i i, nidx, reflen, margin, tigger;
 	int score;
 	clear_u1v(g->cns);
 	g->nrds = 0;
@@ -1579,10 +1597,12 @@ static inline void end_bspoa(BSPOA *g){
 			e = add_edge_bspoa(g, u, v, 0, 1, NULL);
 		}
 	}
+	tigger = g->par->bwtigger;
 	for(;g->nrds<g->seqs->nseq;g->nrds++){
-		if(g->par->refmode == 0 && g->par->bwtigger > 0 && (g->nrds % g->par->bwtigger) == 0){
+		if(g->par->refmode == 0 && tigger > 0 && (g->nrds % tigger) == 0){
 			// generate MSA+CNS per bwtigger reads, the cpos of node is needed to perform banded alignment
 			g->bwtigger = 1;
+			tigger = 2 * tigger;
 			msa_bspoa(g);
 			cns_bspoa(g);
 		}
