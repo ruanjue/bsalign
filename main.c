@@ -10,8 +10,8 @@ int usage(){
 	"Program: bsalign\n"
 	"Version: %s\n"
 	"Author : Jue Ruan <ruanjue@gmail.com>\n"
-	" bsalign reads sequences from STDIN and perform banded-striped-SIMD alignment\n"
-	"Usage: bsalign [options]\n"
+	" bsalign implements banded-striped-SIMD alignment, supports pairwise and multiple sequences alignments\n"
+	"Usage: bsalign [options] [input files]\n"
 	"options:\n"
 	" -h          Show this document\n"
 	" -m <string> align mode: {global/extend/*overlap*},{edit/*align*/poa} [overlap,align]\n"
@@ -112,7 +112,11 @@ int main(int argc, char **argv){
 		}
 	}
 	regfree(&reg);
-	fr = open_filereader(NULL, 0);
+	if(optind < argc){
+		fr = open_all_filereader(argc - optind, argv + optind, 0);
+	} else {
+		fr = open_filereader(NULL, 0);
+	}
 	seqs = init_seqbank();
 	seq = init_biosequence();
 	if((mode & SEQALIGN_MODE_POA)){
