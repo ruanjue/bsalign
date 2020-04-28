@@ -296,8 +296,9 @@ static inline void print_seqs_bspoa(BSPOA *g, char *prefix, char *suffix){
 static inline void print_msa_bspoa(BSPOA *g, FILE *out){
 	char *str;
 	u1i *cns;
-	u4i i, j, b, e, c, n, nseq;
+	u4i i, j, b, c, n, nseq;
 	nseq = g->nrds;
+	cns = ref_u1v(g->msa, g->msa_len * nseq);
 	str = malloc(g->msa_len + 1);
 	fprintf(out, "[POS] ");
 	for(i=j=0;i<g->msa_len;i++){
@@ -317,14 +318,17 @@ static inline void print_msa_bspoa(BSPOA *g, FILE *out){
 			fprintf(out, "[%03u] ", i);
 		}
 		b = i * g->msa_len;
-		e = b + g->msa_len;
 		n = 0;
-		for(j=b;j<e;j++){
-			c = g->msa->buffer[j];
+		for(j=0;j<g->msa_len;j++){
+			c = g->msa->buffer[j + b];
 			if(c < 4) n ++;
-			str[j-b] = "ACGT-acgt*"[c];
+			if(cns[j] < 4 && c != cns[j] && c <= 5){
+				str[j] = "ACGT- acgt- "[c + 6];
+			} else {
+				str[j] = "ACGT- acgt- "[c];
+			}
 		}
-		str[e-b] = 0;
+		str[g->msa_len] = 0;
 		fputs(str, out);
 		if(i == nseq){
 			fprintf(out, "\t%u\t%u\n", (u4i)g->cns->size, n);
@@ -333,7 +337,6 @@ static inline void print_msa_bspoa(BSPOA *g, FILE *out){
 		}
 	}
 	fprintf(out, "[POS] ");
-	cns = ref_u1v(g->msa, g->msa_len * nseq);
 	for(i=j=b=0;i<g->msa_len;i++){
 		if(cns[i] < 4){
 			j ++;
@@ -1153,9 +1156,9 @@ static inline int _alignment2graph_bspoa(BSPOA *g, u4i rid, u4i midx, int xe, in
 				add_char_string(alnstrs[1], '-');
 				add_char_string(alnstrs[2], '-');
 			}
-			if(x == 27 && rid == 10){
-				fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-			}
+			//if(x == 27 && rid == 10){
+				//fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+			//}
 			x --;
 			v = u;
 		}
@@ -1439,84 +1442,128 @@ static inline u4i msa_bspoa(BSPOA *g){
 		while(beg < g->msa_len && r[beg] == 4) beg ++;
 		end = g->msa_len;
 		while(end && r[end - 1] == 4) end --;
+		for(i=0;i<beg;i++) r[i] = 5;
+		for(i=end;i<g->msa_len;i++) r[i] = 5;
 		for(i=beg;i<end;i++) g->hcovs->buffer[i] ++;
 	}
 	return g->msa_len;
 }
 
 static inline float cns_bspoa(BSPOA *g){
-	typedef struct {float sc; int bt;} dp_t;
+	typedef struct {float sc; u1i bt, lb;} dp_t;
 	bspoanode_t *v;
-	dp_t *dps[5];
-	float M, X, I, D, E, HI, HD, *table, s[5], logp;
-	u1i a, b, c, d, *r, **qs;
+	dp_t *dps[5], *dp;
+	float M, X, I, D, E, HI, HD, ps[7], s[5], logp;
+	u1i a, b, c, d, e, f, *r, **qs, *table, *bs[10];
 	u4i nseq, mlen, cpos, rid, i, mpsize;
 	int pos;
-	M  = 0;
-	X  = log(g->par->psub);
-	I  = log(g->par->pins);
-	D  = log(g->par->pdel);
-	E  = log(g->par->pext);
-	HI = log(g->par->hins);
-	HD = log(g->par->hdel);
+	M  = ps[0] = 0;
+	X  = ps[1] = log(g->par->psub);
+	I  = ps[2] = log(g->par->pins);
+	D  = ps[3] = log(g->par->pdel);
+	E  = ps[4] = log(g->par->pext);
+	HI = ps[5] = log(g->par->hins);
+	HD = ps[6] = log(g->par->hdel);
 	nseq = g->nrds;
 	mlen = g->msa_len;
-	mpsize = roundup_times(5 * 5 * 5 * 5 * sizeof(float), 8); // scoring table
+	mpsize = roundup_times(5 * 5 * 5 * 5, 8); // scoring lookup table
 	mpsize += roundup_times(nseq * sizeof(u1i*), 8);
 	mpsize += (mlen + 1) * 5 * sizeof(dp_t);
+	mpsize += nseq * 10; // bs[0/1/2/3/4] is the state of the last read non-N base vs cns[A/C/G/T/-], M/I/D = 0/1/2; 5-9 is a backup
 	clear_and_encap_b1v(g->memp, mpsize);
 	r = (u1i*)g->memp->buffer;
-	table = (float*)r; r += roundup_times(5 * 5 * 5 * 5 * sizeof(float), 8);
+	table = (u1i*)r; r += roundup_times(5 * 5 * 5 * 5, 8);
 	qs = (u1i**)r; r += roundup_times(nseq * sizeof(u1i*), 8);
 	for(i=0;i<nseq;i++) qs[i] = g->msa->buffer + mlen * i;
 	for(i=0;i<5*5*5*5;i++){
-		a = i / 125;
-		b = (i % 125) / 25;
-		c = (i % 25) / 5;
-		d = i % 5;
-		if(d == b){
-			table[i] = M;
-		} else if(d < 4){
-			if(b == 4){
-				if(d == a){
-					table[i] = HI;
-				} else if(c < 4){
-					table[i] = I;
+		a = (i % 5); // cur cns base
+		b = (i % (5 * 5)) / 5; // cur read base
+		c = (i % (5 * 5 * 5)) / (5 * 5); // last cns non-N base; if b < 4, c = b; else = last last ...
+		d = (i % (5 * 5 * 5 * 5)) / (5 * 5 * 5); // last state M/I/D
+		if(a < 4){
+			if(b < 4){
+				if(a == b){
+					table[i] = (0 << 3) | 0; // ps[M] << 3 | M
 				} else {
-					table[i] = E;
+					table[i] = (1 << 3) | 0; // ps[X] << 3 | M
 				}
 			} else {
-				table[i] = X;
+				if(d == 1){
+					if(a == c && ps[5] > ps[4]){
+						table[i] = (5 << 3) | 1; // ps[HI] << 3 | I
+					} else {
+						table[i] = (4 << 3) | 1; // ps[E] << 3 | I
+					}
+				} else {
+					if(a == c && ps[5] > ps[2]){
+						table[i] = (5 << 3) | 1; // ps[HI] << 3 | I
+					} else {
+						table[i] = (2 << 3) | 1; // ps[I] << 3 | I
+					}
+				}
 			}
 		} else {
-			if(c == 4){
-				table[i] = E;
-			} else if(a == b){
-				table[i] = HD;
+			if(b < 4){
+				if(d == 2){
+					if(b == c && ps[6] > ps[4]){
+						table[i] = (6 << 3) | 2; // ps[HD] << 3 | D
+					} else {
+						table[i] = (4 << 3) | 2; // ps[E] << 3 | D
+					}
+				} else {
+					if(b == c && ps[6] > ps[3]){
+						table[i] = (6 << 3) | 2; // ps[HD] << 3 | D
+					} else {
+						table[i] = (3 << 3) | 2; // ps[D] << 3 | D
+					}
+				}
 			} else {
-				table[i] = D;
+				table[i] = (0 << 3) | d; // ps[M] | last_state
 			}
 		}
 	}
 	for(i=0;i<5;i++){
 		dps[i] = (dp_t*)r;
 		r += (mlen + 1) * sizeof(dp_t);
-		memset(dps[i], 0, (mlen + 1) * sizeof(dp_t));
+		dps[i][mlen].sc = 0;
+		dps[i][mlen].bt = 4;
+		dps[i][mlen].lb = 4;
+	}
+	for(i=0;i<10;i++){
+		bs[i] = (u1i*)r; r += nseq;
+		memset(bs[i], 0, nseq);
 	}
 	for(pos=mlen-1;pos>=0;pos--){
-		for(b=0;b<=4;b++){
-			for(a=0;a<=4;a++){
-				s[a] = dps[a][pos + 1].sc;
+		for(a=0;a<=4;a++){
+			for(e=0;e<=4;e++){
+				dp = dps[e] + pos + 1;
+				s[e] = dp->sc;
 				for(rid=0;rid<nseq;rid++){
-					s[a] += table[a * 125 + b * 25 + (pos + 1 == Int(mlen)? 4 : qs[rid][pos + 1]) * 5 + qs[rid][pos]];
+					b = qs[rid][pos];
+					if(b > 4) continue;
+					c = dp->lb;
+					d = bs[e][rid];
+					f = table[a + b * 5 + c * 25 + d * 125];
+					s[e] += ps[f >> 3];
 				}
 			}
 			c = 0;
-			for(a=1;a<=4;a++){
-				if(s[a] > s[c]) c = a;
+			for(e=1;e<=4;e++){
+				if(s[e] > s[c]) c = e;
 			}
-			dps[b][pos].sc = s[c];
-			dps[b][pos].bt = c;
+			dps[a][pos].sc = s[c];
+			dps[a][pos].bt = c;
+			dps[a][pos].lb = (a < 4)? a : dps[c][pos + 1].lb;
+			dp = dps[c] + pos + 1;
+			for(rid=0;rid<nseq;rid++){
+				b = qs[rid][pos];
+				if(b > 4) continue;
+				f = table[a + b * 5 + dp->lb * 25 + bs[c][rid]];
+				bs[a + 5][rid] = f & 0x7;
+			}
+		}
+		for(a=0;a<5;a++){
+			memcpy(bs[a], bs[a + 5], nseq);
 		}
 	}
 	c = 0;
