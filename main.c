@@ -10,8 +10,8 @@ int usage(){
 	"Program: bsalign\n"
 	"Version: %s\n"
 	"Author : Jue Ruan <ruanjue@gmail.com>\n"
-	" bsalign implements banded-striped-SIMD alignment, supports pairwise and multiple sequences alignments\n"
-	"Usage: bsalign [options] [input files]\n"
+	" bsalign implements banded-striped-SIMD alignment, supports both pairwise and multiple sequence alignment\n"
+	"Usage: bsalign [options] <input files>\n"
 	"options:\n"
 	" -h          Show this document\n"
 	" -m <string> align mode: {global/extend/*overlap*},{edit/*align*/poa} [overlap,align]\n"
@@ -20,22 +20,24 @@ int usage(){
 	"             poa mode is multiple sequences alignment, supposes options -W/M/X/O/E/Q/P and -G\n"
 	"             accepts 'edit,global', 'poa,extend' and others\n"
 	" -W <int>    Bandwidth, 0: full length of query [0]\n"
-	"             in POA mode, default option -W 128, see -G tigger=10\n"
+	"             in POA mode, default option -W 128, see -G trigger=10\n"
 	" -M <int>    Score for match, [2]\n"
+	" -B <int>    Bonus for reference in poa->refmode, [1]\n"
 	" -X <int>    Penalty for mismatch, [6]\n"
 	" -O <int>    Penalty for gap open, [3]\n"
 	" -E <int>    Penalty for gap extension, [2]\n"
 	" -Q <int>    Penalty for gap2 open, [8]\n"
 	" -P <int>    Penalty for gap2 extension, [1]\n"
 	" -G <sting>  parameters for POA, <tag>=<val>\n"
-	"             Defaults: tigger=10,nrec=20,refmode=0,psub=0.05,pins=0.05,pdel=0.05,pext=0.50,hins=0.15,hdel=0.25\n"
-	"              tigger: when <tigger> > 0 and <-W> < query length, genrates CNS per after <tigger> reads, and tigger banded alignment\n"
+	"             Defaults: refmode=0,trigger=10,remsa=1,nrec=20,psub=0.05,pins=0.05,pdel=0.10,pext=0.50,hins=0.20,hdel=0.25\n"
+	"              refmode: whether the first sequences is reference sequence, useful in polishing\n"
+	"              trigger: when <trigger> > 0 and <-W> < query length, genrates CNS per after <trigger> reads, and trigger banded alignment\n"
+	"              remsa: based on consensus sequence, do MSA again in <-W> band\n"
 	"              nrec: every query read is aligning against previous <nrec> reads on graph, 0 to all the previous\n"
-	"              ref: whether the first sequences is reference sequence, useful in polishing\n"
 	"              psub/pins/pdel/pext: probs. of mis/ins/del/ext\n"
 	"              hins/hdel: probs of ins/del in homopolymer region\n"
 	"             To polish long reads' consensus with short reads, you might set\n"
-	"              -G refmode=1,tigger=0,nrec=0,psub=0.02,pins=0.005,pdel=0.005,pext=0.002,hins=0.005,hdel=0.005\n"
+	"              -G refmode=1,remsa=0,trigger=0,nrec=0,psub=0.02,pins=0.005,pdel=0.005,pext=0.002,hins=0.005,hdel=0.005\n"
 	" -R <int>    repeat times (for benchmarking) [1]\n"
 	" -v          Verbose\n"
 	"\n", TOSTR(VERSION)
@@ -52,12 +54,16 @@ int main(int argc, char **argv){
 	regmatch_t mats[3];
 	char *str, *tok;
 	int c, mode, _W, W, mat, mis, gapo1, gape1, gapo2, gape2, repm, repn, verbose;
+	int msabeg, msaend, msacnt;
 	par = DEFAULT_BSPOA_PAR;
 	mode = SEQALIGN_MODE_OVERLAP;
 	_W = 0;
 	mat = 2; mis = -6; gapo1 = -3; gape1 = -2; gapo2 = -8; gape2 = -1;
 	repm = 1;
 	verbose = 0;
+	msabeg = 0;
+	msaend = -1;
+	msacnt = 3;
 	c = regcomp(&reg, "([a-zA-Z_]+?)=([.0-9]+?)", REG_EXTENDED);
 	if(c){
 		char regtag[14];
@@ -65,7 +71,7 @@ int main(int argc, char **argv){
 		fprintf(stderr, " -- REGCOMP: %s --\n", regtag); fflush(stderr);
 		exit(1);
 	}
-	while((c = getopt(argc, argv, "hvm:W:M:X:O:E:Q:P:G:R:")) != -1){
+	while((c = getopt(argc, argv, "hvm:W:M:B:X:O:E:Q:P:G:T:R:")) != -1){
 		switch(c){
 			case 'h': return usage();
 			case 'v': verbose ++; break;
@@ -86,6 +92,7 @@ int main(int argc, char **argv){
 			break;
 			case 'W': par.bandwidth = _W = atoi(optarg); break;
 			case 'M': par.M = mat = atoi(optarg); break;
+			case 'B': par.ref_bonus = atoi(optarg); break;
 			case 'X': par.X = mis = - atoi(optarg); break;
 			case 'O': par.O = gapo1 = - atoi(optarg); break;
 			case 'E': par.E = gape1 = - atoi(optarg); break;
@@ -102,11 +109,21 @@ int main(int argc, char **argv){
 					else if(strncasecmp("hins", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.hins = atof(str + mats[2].rm_so);
 					else if(strncasecmp("hdel", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.hdel = atof(str + mats[2].rm_so);
 					else if(strncasecmp("nrec", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.nrec = atof(str + mats[2].rm_so);
-					else if(strncasecmp("tigger", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.bwtigger = atof(str + mats[2].rm_so);
+					else if(strncasecmp("trigger", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.bwtrigger = atof(str + mats[2].rm_so);
 					else if(strncasecmp("refmode", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.refmode = atoi(str + mats[2].rm_so);
+					else if(strncasecmp("remsa", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.remsa = atoi(str + mats[2].rm_so);
 					str += mats[0].rm_eo;
 				}
 				break;
+			case 'T':
+				str = optarg;
+				while(1){
+					if(regexec(&reg, str, 3, mats, 0)) break;
+					if(strncasecmp("msabeg", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) msabeg = atoi(str + mats[2].rm_so);
+					else if(strncasecmp("msaend", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) msaend = atoi(str + mats[2].rm_so);
+					else if(strncasecmp("msacnt", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) msacnt = atoi(str + mats[2].rm_so);
+					str += mats[0].rm_eo;
+				}
 			case 'R': repm = atoi(optarg); break;
 			default: return usage();
 		}
@@ -115,7 +132,8 @@ int main(int argc, char **argv){
 	if(optind < argc){
 		fr = open_all_filereader(argc - optind, argv + optind, 0);
 	} else {
-		fr = open_filereader(NULL, 0);
+		return usage();
+		//fr = open_filereader(NULL, 0);
 	}
 	seqs = init_seqbank();
 	seq = init_biosequence();
@@ -130,10 +148,29 @@ int main(int argc, char **argv){
 		}
 		end_bspoa(g);
 		for(repn=1;repn<repm;repn++){ // for benchmarking
-			beg_bspoacore(g, NULL, 0, 0, 0);
+			beg_bspoacore(g, NULL, 0, 0);
 			end_bspoa(g);
 		}
+		if(par.remsa){
+			BSPOA *lg;
+			if(bspoa_cns_debug){
+				fprintf(stdout, "## Raw MSA\n");
+				print_msa_bspoa(g, stdout);
+			}
+			lg = init_bspoa(par);
+			remsa_bspoa(g, 5, (float[]){0.05, 0.20}, lg);
+			free_bspoa(lg);
+			if(bspoa_cns_debug){
+				fprintf(stdout, "## Polished MSA\n");
+			}
+		}
 		print_msa_bspoa(g, stdout);
+		if(msaend >= msabeg){
+			FILE *out;
+			out = open_file_for_write("1.dot", NULL, 1);
+			print_dot_bspoa(g, msabeg, msaend, msacnt, out);
+			fclose(out);
+		}
 		free_bspoa(g);
 	} else {
 		seqalign_result_t rs;
@@ -165,15 +202,15 @@ int main(int argc, char **argv){
 				tseq->size = seqs->rdlens->buffer[1];
 				for(repn=1;repn<repm;repn++){ // for benchmarking
 					if(mode & SEQALIGN_MODE_EDIT){
-						rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode & 0x7, verbose);
+						rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, 0, cigars, mode & 0x7, verbose);
 					} else {
-						rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode & 0x7, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
+						rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, 0, cigars, mode & 0x7, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
 					}
 				}
 				if(mode & SEQALIGN_MODE_EDIT){
-					rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode & 0x7, verbose);
+					rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, 0, cigars, mode & 0x7, verbose);
 				} else {
-					rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode & 0x7, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
+					rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, 0, cigars, mode & 0x7, W, mtx, gapo1, gape1, gapo2, gape2, verbose);
 				}
 				if(rs.mat){
 					if(strn < rs.aln){
