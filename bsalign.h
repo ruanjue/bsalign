@@ -388,7 +388,6 @@ static inline void striped_epi2_seqedit_row_init(b1i *us[2], u4i W, int mode){
 	u4i i;
 	UNUSED(mode);
 	BIT0 = mm_set1_epi8(0x00);
-	//BIT1 = mm_set1_epi8((mode == SEQALIGN_MODE_OVERLAP)? 0x00 : 0xFF);
 	BIT1 = mm_set1_epi8(0xFF);
 	for(i=0;i<W;i++){
 		mm_store(((xint*)us[0]) + i, BIT0);
@@ -428,8 +427,48 @@ static inline void print_epi2_row(u1i tbase, b1i *us[2], u4i W){
 	fprintf(stdout, "\n");
 }
 
+		//    s       u       v   =    h      v'
+		// -1(10)  -1(10)  -1(10) = -1(10)  0(00)
+		// -1(10)  -1(10)   0(00) = -1(10)  0(00)
+		// -1(10)  -1(10)   1(01) =  0(00)  1(01)
+		// -1(10)  -1(10)   2(11) =  1(01)  2(11)
+		// -1(10)   0(00)  -1(10) = -1(10) -1(10)
+		// -1(10)   0(00)   0(00) = -1(10) -1(10)
+		// -1(10)   0(00)   1(01) =  0(00)
+		// -1(10)   0(00)   2(11) =  1(01)
+		// -1(10)   1(01)  -1(10) =  0(00)
+		// -1(10)   1(01)   0(00) =  0(00)
+		// -1(10)   1(01)   1(01) =  0(00)
+		// -1(10)   1(01)   2(11) =  1(01)
+		// -1(10)   2(11)  -1(10) =  1(01)
+		// -1(10)   2(11)   0(00) =  1(01)
+		// -1(10)   2(11)   1(01) =  1(01)
+		// -1(10)   2(11)   2(11) =  1(01)
+		//  1(00)  -1(10)  -1(10) =  0(00)
+		//  1(00)  -1(10)   0(00) =  0(00)
+		//  1(00)  -1(10)   1(01) =  0(00)
+		//  1(00)  -1(10)   2(11) =  1(01)
+		//  1(00)   0(00)  -1(10) =  0(00)
+		//  1(00)   0(00)   0(00) =  1(01)
+		//  1(00)   0(00)   1(01) =  1(01)
+		//  1(00)   0(00)   2(11) =  1(01)
+		//  1(00)   1(01)  -1(10) =  0(00)
+		//  1(00)   1(01)   0(00) =  1(01)
+		//  1(00)   1(01)   1(01) =  1(01)
+		//  1(00)   1(01)   2(11) =  1(01)
+		//  1(00)   2(11)  -1(10) =  1(01)
+		//  1(00)   2(11)   0(00) =  1(01)
+		//  1(00)   2(11)   1(01) =  1(01)
+		//  1(00)   2(11)   2(11) =  1(01)
+		//    ^^      ^^      ^^       ^^
+		//    ab      cd      ef       xy
+
+
+
+
 // global DNA edit distance
 // rbeg == 0
+// mode is useless
 static void striped_epi2_seqedit_row_cal(u4i rbeg, b1i *us[2][2], b1i *hs, b1i *qprof, u4i W, u1i base, int mode){
 	xint s, u1, u2, u3, u4, v1, v2, h, h2, BIT0, BIT1, BMSK;
 	u4i i, running;
@@ -470,9 +509,6 @@ static void striped_epi2_seqedit_row_cal(u4i rbeg, b1i *us[2][2], b1i *hs, b1i *
 		//  1(00)   1(01)   1(01) =  1(01)
 		//    ^^      ^^      ^^       ^^
 		//    ab      cd      ef       xy
-		// b <- s
-		// c <- u1
-		// e <- v1
 		// x = 0
 		// y = ~(b | c | e)
 		h  = mm_andnot(mm_or(s, mm_or(u1, v1)), BIT1);
@@ -517,9 +553,7 @@ static void striped_epi2_seqedit_row_cal(u4i rbeg, b1i *us[2][2], b1i *hs, b1i *
 	while(running){
 		v1 = mm_sl1bit(v1);
 		v2 = mm_sl1bit(v2);
-		if(mode != SEQALIGN_MODE_OVERLAP){
-			v2 = mm_or(v2, BMSK);
-		}
+		v2 = mm_or(v2, BMSK);
 		for(i=0;i<W;i++){
 			//s   = mm_load(((xint*)qprof) + (rbeg + i) * 4 + base);
 			s   = mm_load(((xint*)qprof) + base * W + i);
@@ -548,6 +582,7 @@ static inline seqalign_result_t striped_epi2_seqedit_backtrace(b1i *uts[2], u4i 
 	seqalign_result_t rs;
 	u4i cg, op;
 	int u1, u2, u3, u4;
+	UNUSED(mode);
 	ZEROS(&rs);
 	rs.qe = x + 1;
 	rs.te = y + 1;
@@ -599,30 +634,27 @@ static inline seqalign_result_t striped_epi2_seqedit_backtrace(b1i *uts[2], u4i 
 	}
 	rs.qb = x + 1;
 	rs.tb = y + 1;
-	if(mode == SEQALIGN_MODE_OVERLAP){
-	} else {
-		if(rs.qb){
-			op = 1;
-			if(op == (cg & 0xf)){
-				cg += 0x10 * rs.qb;
-			} else {
-				if(cg && cigars) push_u4v(cigars, cg);
-				cg = (0x10 * rs.qb) | op;
-			}
-			rs.ins += rs.qb;
-			rs.qb = 0;
+	if(rs.qb){
+		op = 1;
+		if(op == (cg & 0xf)){
+			cg += 0x10 * rs.qb;
+		} else {
+			if(cg && cigars) push_u4v(cigars, cg);
+			cg = (0x10 * rs.qb) | op;
 		}
-		if(rs.tb){
-			op = 2;
-			if(op == (cg & 0xf)){
-				cg += 0x10 * rs.tb;
-			} else {
-				if(cg && cigars) push_u4v(cigars, cg);
-				cg = (0x10 * rs.tb) | op;
-			}
-			rs.del += rs.tb;
-			rs.tb = 0;
+		rs.ins += rs.qb;
+		rs.qb = 0;
+	}
+	if(rs.tb){
+		op = 2;
+		if(op == (cg & 0xf)){
+			cg += 0x10 * rs.tb;
+		} else {
+			if(cg && cigars) push_u4v(cigars, cg);
+			cg = (0x10 * rs.tb) | op;
 		}
+		rs.del += rs.tb;
+		rs.tb = 0;
 	}
 	rs.aln = rs.mat + rs.mis + rs.ins + rs.del;
 	if(cg && cigars) push_u4v(cigars, cg);
@@ -846,12 +878,13 @@ static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qle
 	seqalign_result_t rs;
 	b1i *memp, *mempb, *qprof, *uts[2], *us[2][2], *hs;
 	u8i mpsize;
-	u4i i, j, W;
-	int rx, ry, sbeg, smin, score, cnts[2];
+	u4i i, W;
+	int rx, ry, sbeg, smin;
 	set_qprof = striped_epi2_seqedit_set_query_prof;
 	row_cal   = striped_epi2_seqedit_row_cal;
 	row_init  = striped_epi2_seqedit_row_init;
 	backtrace = striped_epi2_seqedit_backtrace;
+	UNUSED(mode);
 	W = roundup_times(qlen, WORDSIZE * 8) / (WORDSIZE * 8);
 	//fprintf(stdout, "qlen=%d\tW=%d\n", qlen, W);
 	mpsize = 0;
@@ -880,42 +913,19 @@ static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qle
 	ry   = tlen - 1;
 	smin = MAX_B4;
 	row_init(us[0], W, mode);
-	/*
-	b1i *ms[3][2], *ns[3];
-	u2i sbegs[2];
-	ms[2][0] = memp; memp += W * WORDSIZE;
-	ms[2][1] = memp; memp += W * WORDSIZE;
-	ns[0] = (b1i*)memp; memp += 2 * 8 * WORDSIZE;
-	ns[1] = (b1i*)memp; memp += 2 * 8 * WORDSIZE;
-	ns[2] = (b1i*)memp; memp += 2 * 8 * WORDSIZE;
-	*/
-
 	for(i=0;i<tlen;i++){
-		sbeg = (mode == SEQALIGN_MODE_OVERLAP)? 0 : i + 1;
+		sbeg = i + 1;
 		_DEBUG_SCORE = sbeg;
 		us[0][0] = uts[0] + (i + 0) * W * WORDSIZE;
 		us[0][1] = uts[1] + (i + 0) * W * WORDSIZE;
 		us[1][0] = uts[0] + (i + 1) * W * WORDSIZE;
 		us[1][1] = uts[1] + (i + 1) * W * WORDSIZE;
 		row_cal(0, us, hs, qprof, W, tseq[i], mode);
-		if(mode == SEQALIGN_MODE_OVERLAP){
-			cnts[0] = cnts[1] = 0;
-			for(j=0;j<W*(WORDSIZE/8);j++){ // padding cells at the end should be the same between rows
-				cnts[0] += __builtin_popcountll(((u8i*)us[1][0])[j]);
-				cnts[1] += __builtin_popcountll(((u8i*)us[1][1])[j]);
-			}
-			score = sbeg + cnts[1] - cnts[0];
-			if(score < smin){
-				smin = score;
-				rx   = qlen - 1;
-				ry   = i;
-			}
-		}
 		if(verbose){
 			int vals[2][2] = {{0, 1}, {-1, 2}};
 			int j, b1, b2, u, u2, v, v2, score, error;
-			score = (mode == SEQALIGN_MODE_OVERLAP)? 0 : i + 1;
-			v2    = (mode == SEQALIGN_MODE_OVERLAP)? 0 : 1;
+			score = i + 1;
+			v2    = 1;
 			error = 0;
 			fprintf(stdout, "[%04d:%c]\t", i, "ACGTN"[tseq[i]]);
 			for(j=0;j<Int(qlen);j++){
@@ -943,19 +953,6 @@ static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qle
 			}
 			fprintf(stdout, "\n");
 		}
-		/*
-		ms[0][0] = us[0][0];
-		ms[0][1] = us[0][1];
-		ms[1][0] = us[1][0];
-		ms[1][1] = us[1][1];
-		if(mode == SEQALIGN_MODE_OVERLAP){
-			sbegs[0] = sbegs[1] = 0;
-		} else {
-			sbegs[0] = i;
-			sbegs[1] = i + 1;
-		}
-		striped_epi2_seqedit_row_merge(sbegs, ms, ns, W);
-		*/
 	}
 	rs = backtrace(uts, W, mode, qseq, rx, tseq, ry, cigars);
 	if(mempb) free(mempb);
