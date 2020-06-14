@@ -14,7 +14,8 @@
 //ary, size and cap must be explict variable, not expression
 #define array_heap_push(ary, size, cap, e_type, id, cmp_expr)\
 do {	\
-	e_type _pp_, _p_;	\
+	e_type *_ary_, _pp_, _p_;	\
+	_ary_ = (e_type*)(ary);	\
 	_p_ = (e_type)(id);	\
 	size_t i, j;	\
 	i = (size);	\
@@ -25,64 +26,71 @@ do {	\
 		} else {	\
 			(cap) = (((size) + 1 + 0xFFFFFFFLLU - 1LLU) / 0xFFFFFFFLLU) * 0xFFFFFFFLLU;	\
 		}	\
-		(ary) = realloc((ary), sizeof(e_type) * (cap));	\
-		if((ary) == NULL){	\
+		_ary_ = realloc(_ary_, sizeof(e_type) * (cap));	\
+		if(_ary_ == NULL){	\
 			fprintf(stderr, " -- Out of memory, try to allocate %llu bytes in %s, -- %s:%d --\n", (unsigned long long)(sizeof(e_type) * (cap)), __FUNCTION__, __FILE__, __LINE__);	\
 			print_backtrace(stderr, 20);	\
 			exit(1);	\
 		}	\
 	}	\
-	(ary)[(size)++] = _p_;	\
+	_ary_[(size)++] = _p_;	\
 	while(i){	\
 		j = (i - 1) >> 1;	\
-		a = (ary)[i]; b = (ary)[j];	\
+		a = _ary_[i]; b = _ary_[j];	\
 		if((cmp_expr) >= 0) break;	\
-		_pp_ = (ary)[i]; (ary)[i] = (ary)[j]; (ary)[j] = _pp_;	\
+		_pp_ = _ary_[i]; _ary_[i] = _ary_[j]; _ary_[j] = _pp_;	\
 		i = j;	\
 	}	\
 } while(0)
 
+#define list_heap_push(list, id, cmp_expr) array_heap_push((list)->buffer, (list)->size, (list)->cap, typeof(*(list)->buffer), id, cmp_expr)
+
 #define array_heap_remove(ary, len, cap, e_type, _idx, cmp_expr)\
 do {	\
-	e_type _pp_;	\
+	e_type *_ary_, _pp_;	\
 	size_t swap, idx;	\
+	_ary_ = (e_type*)(ary);	\
 	idx = (size_t)(_idx);	\
-	(ary)[idx] = (ary)[--(len)];	\
+	_ary_[idx] = _ary_[--(len)];	\
 	e_type a, b;	\
 	while((size_t)((idx << 1) + 1) < (size_t)(len)){	\
 		swap = idx;	\
-		a = (ary)[swap]; b = (ary)[(idx << 1) + 1];	\
+		a = _ary_[swap]; b = _ary_[(idx << 1) + 1];	\
 		if((cmp_expr) > 0) swap = (idx << 1) + 1;	\
 		if(((idx << 1) + 2) < (size_t)(len)){	\
-			a = (ary)[swap]; b = (ary)[(idx << 1) + 2];	\
+			a = _ary_[swap]; b = _ary_[(idx << 1) + 2];	\
 			if((cmp_expr) > 0) swap = (idx << 1) + 2;	\
 		}	\
 		if(swap == idx) break;	\
-		_pp_ = (ary)[idx]; (ary)[idx] = (ary)[swap]; (ary)[swap] = _pp_;	\
+		_pp_ = _ary_[idx]; _ary_[idx] = _ary_[swap]; _ary_[swap] = _pp_;	\
 		idx = swap;	\
 	}	\
 } while(0)
 
+#define list_heap_remove(list, _idx, cmp_expr) array_heap_remove((list)->buffer, (list)->size, (list)->cap, typeof(*(list)->buffer), _idx, cmp_expr)
+
 #define array_heap_replace(ary, len, cap, e_type, _idx, _val, cmp_expr)\
 do {	\
-	e_type _pp_;	\
+	e_type *_ary_, _pp_;	\
 	size_t swap, idx;	\
 	idx = (size_t)(_idx);	\
-	(ary)[idx] = _val;	\
+	_ary_[idx] = _val;	\
 	e_type a, b;	\
 	while((size_t)((idx << 1) + 1) < (size_t)(len)){	\
 		swap = idx;	\
-		a = (ary)[swap]; b = (ary)[(idx << 1) + 1];	\
+		a = _ary_[swap]; b = _ary_[(idx << 1) + 1];	\
 		if((cmp_expr) > 0) swap = (idx << 1) + 1;	\
 		if(((idx << 1) + 2) < (size_t)(len)){	\
-			a = (ary)[swap]; b = (ary)[(idx << 1) + 2];	\
+			a = _ary_[swap]; b = _ary_[(idx << 1) + 2];	\
 			if((cmp_expr) > 0) swap = (idx << 1) + 2;	\
 		}	\
 		if(swap == idx) break;	\
-		_pp_ = (ary)[idx]; (ary)[idx] = (ary)[swap]; (ary)[swap] = _pp_;	\
+		_pp_ = _ary_[idx]; _ary_[idx] = _ary_[swap]; _ary_[swap] = _pp_;	\
 		idx = swap;	\
 	}	\
 } while(0)
+
+#define list_heap_replace(list, _idx, _val, cmp_expr) array_heap_replace((list)->buffer, (list)->size, (list)->cap, typeof(*(list)->buffer), _idx, _val, cmp_expr)
 
 #define array_heap_pop(ary, len, cap, e_type, cmp_expr)	\
 ({	\
