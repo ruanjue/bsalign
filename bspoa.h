@@ -56,11 +56,13 @@ typedef struct {
 	int bwtrigger; // 10, min aligned reads to tigger bandwidth for next read
 	int bandwidth; // 128, when tiggering bandwidth, first generate cns, then align read against cns to get the offset of each node' band
 	int M, X, O, E, Q, P; // 2, -6, -3, -2, -8, -1
-	int ref_bonus; // 1
-	float psub, pins, pdel, pext, hins, hdel; // 0.05, 0.05, 0.10, 0.50, 0.20, 0.25
+	int refbonus; // 1
+	int rma_win; // 5, min length of flinking high quality cns bases
+	int qltlo, qlthi; // 30, 35. trigger local remsa when cns quality <= qltlo
+	float psub, pins, pdel, piex, pdex, hins, hdel; // 0.05, 0.05, 0.10, 0.25, 0.30, 0.10, 0.20
 } BSPOAPar;
 
-static const BSPOAPar DEFAULT_BSPOA_PAR = (BSPOAPar){0, SEQALIGN_MODE_GLOBAL, 1, 20, 10, 128, 2, -6, -3, -2, -8, -1, 1, 0.05, 0.05, 0.10, 0.50, 0.20, 0.25};
+static const BSPOAPar DEFAULT_BSPOA_PAR = (BSPOAPar){0, SEQALIGN_MODE_GLOBAL, 1, 20, 10, 128, 2, -6, -3, -2, -8, -1, 1, 5, 30, 35, 0.05, 0.05, 0.10, 0.25, 0.30, 0.10, 0.20};
 
 typedef struct {
 	u4i coff:29, bt:3;
@@ -82,28 +84,31 @@ typedef struct {
 	b1i matrix[2][16];
 	b1v *qprof[2];
 	b1v *memp; // memory pool
-	u8i mmoff, mmblk, mmcnt;
+	u8i mmblk, mmcnt;
 	int maxscr, maxidx, maxoff;
+	u8v *heap;
 	u4v *stack;
 	u2i backbone;
 	u1v *msacols;
 	u2v *msaidxs, *msacycs;
 	u2v *hcovs;
-	float dpvals[7];
+	float dpvals[8];
 	u1i *dptable;
-	u1v *cns;
-	u8i ncall, naln, nnode, nsse;
+	u1v *cns, *qlt;
+	String *strs;
+	u8i ncall, obj_uid;
 } BSPOA;
 
-static inline void gen_cns_aln_event_table_bspoa(BSPOAPar *par, float ps[7], u1i *table){
+static inline void gen_cns_aln_event_table_bspoa(BSPOAPar *par, float ps[8], u1i *table){
 	u4i i, a, b, c, d;
-	ps[0] = 0;                 // M
+	ps[0] = 0;              // M
 	ps[1] = log(par->psub); // X
 	ps[2] = log(par->pins); // I
 	ps[3] = log(par->pdel); // D
-	ps[4] = log(par->pext); // E
-	ps[5] = log(par->hins); // HI
-	ps[6] = log(par->hdel); // HD
+	ps[4] = log(par->piex); // IE
+	ps[5] = log(par->pdex); // DE
+	ps[6] = log(par->hins); // HI
+	ps[7] = log(par->hdel); // HD
 	for(i=0;i<5*5*5*5;i++){
 		a = (i % 5); // cur cns base
 		b = (i % (5 * 5)) / 5; // cur read base
@@ -117,15 +122,15 @@ static inline void gen_cns_aln_event_table_bspoa(BSPOAPar *par, float ps[7], u1i
 					table[i] = (1 << 3) | 0; // ps[X] << 3 | M
 				}
 			} else {
-				if(d == 1){
-					if(a == c && ps[5] > ps[4]){
-						table[i] = (6 << 3) | 2; // ps[HD] << 3 | D
+				if(d == 2){
+					if(a == c && ps[7] > ps[5]){
+						table[i] = (7 << 3) | 2; // ps[HD] << 3 | D
 					} else {
-						table[i] = (4 << 3) | 2; // ps[E] << 3 | D
+						table[i] = (5 << 3) | 2; // ps[DE] << 3 | D
 					}
 				} else {
-					if(a == c && ps[5] > ps[2]){
-						table[i] = (6 << 3) | 2; // ps[HD] << 3 | D
+					if(a == c && ps[7] > ps[3]){
+						table[i] = (7 << 3) | 2; // ps[HD] << 3 | D
 					} else {
 						table[i] = (3 << 3) | 2; // ps[D] << 3 | D
 					}
@@ -133,15 +138,15 @@ static inline void gen_cns_aln_event_table_bspoa(BSPOAPar *par, float ps[7], u1i
 			}
 		} else {
 			if(b < 4){
-				if(d == 2){
+				if(d == 1){
 					if(b == c && ps[6] > ps[4]){
-						table[i] = (5 << 3) | 1; // ps[HI] << 3 | I
+						table[i] = (6 << 3) | 1; // ps[HI] << 3 | I
 					} else {
-						table[i] = (4 << 3) | 1; // ps[E] << 3 | I
+						table[i] = (4 << 3) | 1; // ps[IE] << 3 | I
 					}
 				} else {
-					if(b == c && ps[6] > ps[3]){
-						table[i] = (5 << 3) | 1; // ps[HI] << 3 | I
+					if(b == c && ps[6] > ps[2]){
+						table[i] = (6 << 3) | 1; // ps[HI] << 3 | I
 					} else {
 						table[i] = (2 << 3) | 1; // ps[I] << 3 | I
 					}
@@ -178,9 +183,9 @@ static inline BSPOA* init_bspoa(BSPOAPar par){
 	g->qprof[0] = adv_init_b1v(4 * 1024, 0, WORDSIZE, WORDSIZE);
 	g->qprof[1] = adv_init_b1v(4 * 1024, 0, WORDSIZE, WORDSIZE);
 	g->memp  = init_b1v(1024);
-	g->mmoff = 0;
 	g->mmblk = 0;
 	g->mmcnt = 0;
+	g->heap = init_u8v(32);
 	g->stack = init_u4v(32);
 	g->backbone = 0;
 	g->msacols = init_u1v(16 * 1024);
@@ -189,11 +194,11 @@ static inline BSPOA* init_bspoa(BSPOAPar par){
 	g->hcovs = init_u2v(4 * 1024);
 	g->dptable = malloc(5 * 5 * 5 * 5);
 	gen_cns_aln_event_table_bspoa(g->par, g->dpvals, g->dptable);
+	g->strs = init_string(1024);
 	g->cns = init_u1v(1024);
+	g->qlt = init_u1v(1024);
 	g->ncall = 0;
-	g->naln = 0;
-	g->nnode = 0;
-	g->nsse = 0;
+	g->obj_uid = 0;
 	return g;
 }
 
@@ -213,15 +218,17 @@ static inline void renew_bspoa(BSPOA *g){
 	renew_b1v(g->qprof[1], 4 * 1024);
 	renew_b1v(g->memp, 4 * 1024);
 	g->nrds  = 0;
-	g->mmoff = 0;
 	g->mmblk = 0;
 	g->mmcnt = 0;
+	renew_u8v(g->heap, 32);
 	renew_u4v(g->stack, 32);
 	renew_u1v(g->msacols, 16 * 1024);
 	renew_u2v(g->msaidxs, 1024);
 	renew_u2v(g->msacycs, 1024);
 	renew_u2v(g->hcovs, 4 * 1024);
 	renew_u1v(g->cns, 1024);
+	renew_u1v(g->qlt, 1024);
+	recap_string(g->strs, 1024);
 }
 
 static inline void free_bspoa(BSPOA *g){
@@ -239,6 +246,7 @@ static inline void free_bspoa(BSPOA *g){
 	free_b1v(g->qprof[0]);
 	free_b1v(g->qprof[1]);
 	free_b1v(g->memp);
+	free_u8v(g->heap);
 	free_u4v(g->stack);
 	free_u1v(g->msacols);
 	free_u2v(g->msaidxs);
@@ -246,6 +254,8 @@ static inline void free_bspoa(BSPOA *g){
 	free_u2v(g->hcovs);
 	free(g->dptable);
 	free_u1v(g->cns);
+	free_u1v(g->qlt);
+	free_string(g->strs);
 	free(g->par);
 	free(g);
 }
@@ -394,7 +404,7 @@ static inline void print_local_dot_bspoa(BSPOA *g, u4i ori_nidx, u4i step, FILE 
 	for(nidx=0;nidx<g->nodes->size;nidx++){
 		if(auxs[nidx] == 0) continue;
 		n = ref_bspoanodev(g->nodes, nidx);
-		fprintf(out, "N%u [label=%c%u_%d_%d_N%u]\n", nidx, bit_base_table[(n->base) & 0x03], n->rpos, n->cpos, n->cov, nidx);
+		fprintf(out, "N%u [label=%c%u_%d_%d_N%u%s]\n", nidx, bit_base_table[(n->base) & 0x03], n->rpos, n->cpos, n->cov, nidx, (nidx == ori_nidx)? " style=filled fillcolor=yellow" : "");
 	}
 	for(nidx=0;nidx<g->nodes->size;nidx++){
 		if(auxs[nidx] == 0) continue;
@@ -446,14 +456,22 @@ static inline void print_seqs_bspoa(BSPOA *g, char *prefix, char *suffix){
 	fclose(out);
 }
 
-static inline char* str_msa_bspoa(BSPOA *g, char *str){
+static inline char* str_msa_bspoa(BSPOA *g, String *strp){
 	u1i *col;
-	u4i i, j, nseq, mlen;
+	u4i i, j, b, nseq, mrow, mlen;
+	char *str, *cp;
 	nseq = g->nrds;
+	mrow = nseq + 2;
 	mlen = g->msaidxs->size;
-	str = realloc(str, (nseq + 1) * (mlen + 1));
+	if(strp){
+		clear_string(strp);
+		encap_string(strp, (mrow + 2) * (mlen + 1));
+		str = strp->string;
+	} else {
+		str = malloc((mrow + 2) * (mlen + 1));
+	}
 	for(i=0;i<mlen;i++){
-		col = g->msacols->buffer + g->msaidxs->buffer[i] * (nseq + 1);
+		col = g->msacols->buffer + g->msaidxs->buffer[i] * mrow;
 		for(j=0;j<=nseq;j++){
 			//if(col[nseq] < 4 && col[j] < 4 && col[j] != col[nseq]){
 			if(col[j] < 4 && col[j] != col[nseq]){
@@ -462,57 +480,118 @@ static inline char* str_msa_bspoa(BSPOA *g, char *str){
 				str[j * (mlen + 1) + i] = "ACGT- "[col[j]];
 			}
 		}
+		str[j * (mlen + 1) + i] = '!' + col[j]; // phred qualty score
 	}
-	for(j=0;j<=nseq;j++) str[j * (mlen + 1) + mlen] = '\0';
-	return str;
-}
-
-static inline void print_msa_bspoa(BSPOA *g, FILE *out){
-	char *str;
-	u4i i, j, b, nseq, mlen;
-	nseq = g->nrds;
-	mlen = g->msaidxs->size;
-	str = str_msa_bspoa(g, NULL);
-	fprintf(out, "MSA [POS] ");
+	for(j=0;j<mrow;j++) str[j * (mlen + 1) + mlen] = '\0';
+	cp = str + mrow * (mlen + 1);
 	for(i=j=0;i<mlen;i++){
-		if((i % 10) == 0){
-			fprintf(out, "|%04u", i + 1);
-			j += 5;
+		if((i % 10) == 0 && j + 5 <= mlen){
+			sprintf(cp, "|%04u", i + 1);
+			j  += 5;
+			cp += 5;
 		} else if(i >= j){
-			putc(' ', out);
+			cp[0] = ' ';
+			cp ++;
 			j ++;
 		}
 	}
-	fputc('\n', out);
-	for(i=0;i<=nseq;i++){
+	cp[0] = '\0';
+	cp ++;
+	for(i=j=b=0;i<mlen;i++){
+		if(g->msacols->buffer[i * mrow + nseq] < 4){
+			j ++;
+			if((j % 10) == 1){
+				while(b < i){
+					cp[0] = ' ';
+					cp ++;
+					b  ++;
+				}
+				if(b + 5 < mlen){
+					sprintf(cp, "|%04u", j);
+					cp += 5;
+					b  += 5;
+				}
+			}
+		}
+	}
+	while(b < mlen){ cp[0] = ' '; cp ++; b ++; }
+	cp[0] = '\0';
+	return str;
+}
+
+static inline void print_msa_sline_bspoa(BSPOA *g, FILE *out){
+	char *str;
+	u4i i, nseq, mrow, mlen;
+	nseq = g->nrds;
+	mrow = nseq + 2;
+	mlen = g->msaidxs->size;
+	str = str_msa_bspoa(g, g->strs);
+	fprintf(out, "MSA [POS] %s\n", str + mrow * (mlen + 1));
+	for(i=0;i<mrow;i++){
 		if(i == nseq){
 			fprintf(out, "MSA [CNS] ");
+		} else if(i == nseq + 1){
+			fprintf(out, "MSA [QLT] ");
 		} else {
 			fprintf(out, "MSA [%03u] ", i);
 		}
 		fprintf(out, "%s\n", str + i * (mlen + 1));
 	}
-	fprintf(out, "MSA [POS] ");
-	for(i=j=b=0;i<mlen;i++){
-		if(g->msacols->buffer[i * (nseq + 1) + nseq] < 4){
-			j ++;
-			if((j % 10) == 1){
-				while(b < i){
-					fputc(' ', out);
-					b ++;
-				}
-				fprintf(out, "|%04u", j);
-				b += 5;
-			}
-		}
-	}
-	fprintf(out, "\n");
+	fprintf(out, "MSA [POS] %s\n", str + (mrow + 1) * (mlen + 1));
 	for(i=0;i<g->cns->size;i++){
 		str[i] = bit_base_table[g->cns->buffer[i]];
 	}
 	str[i] = 0;
-	fprintf(out, "CNS %s\n", str);
-	free(str);
+	fprintf(out, "CNS\t%d\t%s\n", Int(g->cns->size), str);
+	for(i=0;i<g->qlt->size;i++){
+		str[i] = '!' +  g->qlt->buffer[i]; // Phred + 33
+	}
+	str[i] = 0;
+	fprintf(out, "QLT\t%d\t%s\n", Int(g->qlt->size), str);
+}
+
+static inline void print_msa_mline_bspoa(BSPOA *g, FILE *out){
+	char *str, *cp, c;
+	u4i i, j, b, nseq, mrow, mlen;
+	nseq = g->nrds;
+	mrow = nseq + 2;
+	mlen = g->msaidxs->size;
+	str = str_msa_bspoa(g, g->strs);
+	for(i=0;i<mlen;i+=100){
+		b = num_min(i + 100, mlen);
+		cp = str + mrow * (mlen + 1);
+		c = cp[b]; cp[b] = '\0';
+		fprintf(out, "MSA [POS] %s\n", cp + i);
+		cp[b] = c;
+		for(j=0;j<mrow;j++){
+			cp = str + j * (mlen + 1);
+			c = cp[b]; cp[b] = '\0';
+			if(j == nseq){
+				fprintf(out, "MSA [CNS] ");
+			} else if(j == nseq + 1){
+				fprintf(out, "MSA [QLT] ");
+			} else {
+				fprintf(out, "MSA [%03u] ", j);
+			}
+			fprintf(out, "%s\n", cp + i);
+			cp[b] = c;
+		}
+		cp = str + (mrow + 1) * (mlen + 1);
+		c = cp[b]; cp[b] = '\0';
+		fprintf(out, "MSA [POS] %s\n", cp + i);
+		cp[b] = c;
+		fprintf(out, "MSA\n");
+	}
+	for(i=0;i<g->cns->size;i++){
+		str[i] = bit_base_table[g->cns->buffer[i]];
+	}
+	str[i] = 0;
+	fprintf(out, "CNS\t%d\t%s\n", Int(g->cns->size), str);
+	for(i=0;i<g->qlt->size;i++){
+		str[i] = '!' +  g->qlt->buffer[i]; // Phred + 33
+	}
+	str[i] = 0;
+	fprintf(out, "QLT\t%d\t%s\n", Int(g->qlt->size), str);
 }
 
 static inline void check_node_edges_bspoa(BSPOA *g, u4i nidx, int rev){
@@ -553,10 +632,10 @@ static inline void check_all_node_edges_bspoa(BSPOA *g){
 	}
 }
 
-static inline bspoanode_t* add_node_bspoa(BSPOA *g, u2i rid, u2i pos, u1i base, int realn){
+static inline bspoanode_t* add_node_bspoa(BSPOA *g, u2i rid, u2i pos, u1i base, int node_exists){
 	bspoanode_t *u;
-	if(realn){
-		u = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - 1 - pos);
+	if(node_exists){
+		u = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid] + pos);
 	} else {
 		u = next_ref_bspoanodev(g->nodes);
 	}
@@ -626,7 +705,7 @@ static inline void add_edge_bspoacore(BSPOA *g, bspoanode_t *v, u4i eidx){
 
 static inline bspoaedge_t* add_edge_bspoa(BSPOA *g, bspoanode_t *u, bspoanode_t *v, int cov, int is_aux, int *exists){
 	bspoaedge_t *e, *f, *r;
-	u4i eidx, *eptr;
+	u4i *eptr;
 	int exs;
 #if DEBUG
 	if(u == v){
@@ -640,7 +719,6 @@ static inline bspoaedge_t* add_edge_bspoa(BSPOA *g, bspoanode_t *u, bspoanode_t 
 	encap_bspoaedgev(g->edges, 2);
 	e = f = NULL;
 	eptr = &u->edge;
-	eidx = u->edge;
 	exs = 0;
 	while(*eptr){
 		f = ref_bspoaedgev(g->edges, *eptr);
@@ -731,8 +809,8 @@ static inline void del_edge_bspoa(BSPOA *g, bspoanode_t *v, u4i eidx){
 	bspoaedge_t *e;
 	e = ref_bspoaedgev(g->edges, eidx);
 	w = ref_bspoanodev(g->nodes, e->node);
-	del_edge_bspoacore(g, v, eidx + 0);
-	del_edge_bspoacore(g, w, eidx + 1);
+	del_edge_bspoacore(g, v, eidx);
+	del_edge_bspoacore(g, w, eidx ^ 0x1);
 #if DEBUG
 	if(eidx == 0){ // for debug
 		check_all_node_edges_bspoa(g);
@@ -814,6 +892,125 @@ static inline bspoanode_t* merge_node_bspoa(BSPOA *g, u2i rid, bspoanode_t *x, b
 	return y;
 }
 
+static inline void mov_nodes_header_bspoa(BSPOA *g, u4i nidx, u4i uidx){
+	bspoanode_t *u, *v, *x;
+	u4i xidx, found;
+	if(nidx == uidx) return;
+	found = 0;
+	xidx = nidx;
+	do {
+		if(xidx == uidx) found ++;
+		x = ref_bspoanodev(g->nodes, xidx);
+		xidx = x->aligned;
+		x->header = uidx;
+	} while(xidx != nidx);
+	if(found != 1){
+		fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+		abort();
+	}
+	u = ref_bspoanodev(g->nodes, uidx);
+	v = ref_bspoanodev(g->nodes, nidx);
+#if DEBUG
+	if(u->edge || u->erev){
+		fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+		abort();
+	}
+#endif
+	mov_node_edges_bspoa(g, nidx, uidx);
+}
+
+static inline bspoanode_t* seperate_node_bspoa(BSPOA *g, u2i rid, u2i pos){
+	bspoanode_t *u, *v, *x;
+	bspoaedge_t *e, *f;
+	u4i nidx, xidx, eidx, found;
+	nidx = g->ndoffs->buffer[rid] + pos;
+	v = ref_bspoanodev(g->nodes, nidx);
+	if(v->aligned == nidx){
+		return v;
+	}
+	if(v->header == nidx){
+		mov_nodes_header_bspoa(g, nidx, v->aligned);
+	}
+	u = ref_bspoanodev(g->nodes, v->header);
+	found = 0;
+	for(x=ref_bspoanodev(g->nodes, v->aligned);x->aligned!=v->aligned;x=ref_bspoanodev(g->nodes, x->aligned)){
+		if(x->aligned == nidx){
+			x->aligned = v->aligned;
+			v->aligned = nidx;
+			v->header  = nidx;
+			found = 1;
+			break;
+		}
+	}
+	if(!found){
+		fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+		abort();
+	}
+	{
+		if(pos + 1U >= g->seqs->rdlens->buffer[rid]){
+			xidx = BSPOA_TAIL_NODE;
+		} else {
+			xidx = g->ndoffs->buffer[rid] + pos + 1;
+			x = ref_bspoanodev(g->nodes, xidx);
+			xidx = x->header;
+		}
+		found = 0;
+		eidx = u->edge;
+		while(eidx){
+			e = ref_bspoaedgev(g->edges, eidx);
+			if(e->node == xidx){
+				f = e + 1;
+				e->cov --;
+				f->cov --;
+				if(e->cov == 0 && e->is_aux == 0){
+					del_edge_bspoa(g, u, eidx);
+				}
+				found = 1;
+				break;
+			}
+			eidx = e->next;
+		}
+		if(!found){
+			fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+			abort();
+		}
+		x = ref_bspoanodev(g->nodes, xidx);
+		add_edge_bspoa(g, v, x, 1, 0, NULL);
+	}
+	{
+		if(pos == 0){
+			xidx = BSPOA_HEAD_NODE;
+		} else {
+			xidx = g->ndoffs->buffer[rid] + pos - 1;
+			x = ref_bspoanodev(g->nodes, xidx);
+			xidx = x->header;
+		}
+		found = 0;
+		eidx = u->erev;
+		while(eidx){
+			e = ref_bspoaedgev(g->edges, eidx);
+			if(e->node == xidx){
+				f = e - 1;
+				e->cov --;
+				f->cov --;
+				if(e->cov == 0 && e->is_aux == 0){
+					del_edge_bspoa(g, u, eidx);
+				}
+				found = 1;
+				break;
+			}
+			eidx = e->next;
+		}
+		if(!found){
+			fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+			abort();
+		}
+		x = ref_bspoanodev(g->nodes, xidx);
+		add_edge_bspoa(g, x, v, 1, 0, NULL);
+	}
+	return v;
+}
+
 static inline void del_read_nodes_bspoa(BSPOA *g, u2i rid, u2i rb, u2i re){
 	bspoanode_t *u, *v, *x;
 	bspoaedge_t *e;
@@ -823,14 +1020,15 @@ static inline void del_read_nodes_bspoa(BSPOA *g, u2i rid, u2i rb, u2i re){
 	if(re >= rdlen){
 		u = ref_bspoanodev(g->nodes, BSPOA_TAIL_NODE);
 		re = rdlen;
+		nidx = nidx + re - 1;
 	} else {
-		nidx = nidx + rdlen - re;
-		u = ref_bspoanodev(g->nodes, nidx - 1);
+		nidx = nidx + re - 1;
+		u = ref_bspoanodev(g->nodes, nidx + 1);
 		u = ref_bspoanodev(g->nodes, u->header);
 	}
 	if(rb >= re) return;
-	nide = nidx + re - rb;
-	for(;;nidx++){
+	nide = g->ndoffs->buffer[rid] + rb - 1;
+	for(;;nidx--){
 		if(nidx == nide){
 			if(rb == 0){
 				nidx = BSPOA_HEAD_NODE;
@@ -858,9 +1056,6 @@ static inline void del_read_nodes_bspoa(BSPOA *g, u2i rid, u2i rb, u2i re){
 			abort();
 		}
 #endif
-		//if(nidx == 2186){
-			//fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-		//}
 		e->cov --;
 		(e + 1)->cov --;
 		if(e->cov == 0 && e->is_aux == 0){ // keep aux edge
@@ -899,7 +1094,6 @@ static inline void beg_bspoacore(BSPOA *g, u1i *cns, u2i len, int clear_all){
 	bspoanode_t *head, *tail, *u, *v;
 	bspoaedge_t *e;
 	u4i i, bb;
-	g->mmoff = 0;
 	g->bwtrigger = 0;
 	g->ncall ++;
 	clear_u4v(g->ndoffs);
@@ -941,6 +1135,7 @@ static inline void beg_bspoacore(BSPOA *g, u1i *cns, u2i len, int clear_all){
 	if(clear_all){
 		clear_seqbank(g->seqs);
 		clear_u1v(g->cns);
+		clear_u1v(g->qlt);
 	}
 }
 
@@ -952,7 +1147,7 @@ static inline void beg_bspoa(BSPOA *g){
 }
 
 static inline b1i* dpalign_row_prepare_data(BSPOA *g, u4i mmidx, b1i **us, b1i **es, b1i **qs, int **ubegs){
-	us[0] = g->memp->buffer + g->mmoff + mmidx * g->mmblk;
+	us[0] = g->memp->buffer + mmidx * g->mmblk;
 	es[0] = (g->piecewise > 0)? us[0] + g->bandwidth : NULL;
 	qs[0] = (g->piecewise > 1)? es[0] + g->bandwidth : NULL;
 	ubegs[0] = (int*)(us[0] + g->bandwidth * (g->piecewise + 1));
@@ -981,8 +1176,8 @@ static inline void prepare_rd_align_bspoa(BSPOA *g, u2i rid){
 	if(g->par->refmode && g->backbone && g->cges->buffer[rid] > g->cgbs->buffer[rid]){
 		g->bandwidth = num_min(g->par->bandwidth, Int(seqlen));
 		g->bandwidth = roundup_times(g->bandwidth, WORDSIZE);
-		clear_and_encap_b1v(g->memp, g->mmoff + (g->cns->size + 1) * sizeof(u2i));
-		rmap = (u2i*)(g->memp->buffer + g->mmoff);
+		clear_and_encap_b1v(g->memp, (g->cns->size + 1) * sizeof(u2i));
+		rmap = (u2i*)(g->memp->buffer);
 		cgs = g->cigars->buffer + g->cgbs->buffer[rid];
 		ncg = g->cges->buffer[rid] - g->cgbs->buffer[rid];
 		// find tailing margin, see 'D/N/H' cigar in SAM
@@ -1013,23 +1208,25 @@ static inline void prepare_rd_align_bspoa(BSPOA *g, u2i rid){
 	} else if(g->bwtrigger && Int(roundup_times(seqlen, WORDSIZE)) > g->par->bandwidth){
 		g->bandwidth = num_min(g->par->bandwidth, Int(seqlen));
 		g->bandwidth = roundup_times(g->bandwidth, WORDSIZE);
-		rs = striped_epi2_seqedit_pairwise(g->qseq->buffer, g->qseq->size, g->cns->buffer, g->cns->size, g->memp, g->mmoff, g->stack, g->par->alnmode, 0);
+		rs = striped_epi2_seqedit_pairwise(g->qseq->buffer, g->qseq->size, g->cns->buffer, g->cns->size, g->memp, g->stack, g->par->alnmode, 0);
+		//rs = banded_striped_epi8_seqalign_pairwise(g->qseq->buffer, g->qseq->size, g->cns->buffer, g->cns->size, g->memp, g->stack, SEQALIGN_MODE_GLOBAL, g->qseq->size, g->matrix[0], 0, g->par->E, 0, 0, 0);
 		if(bspoa_cns_debug){
 			char *alnstr[3];
 			alnstr[0] = malloc(rs.aln + 1);
 			alnstr[1] = malloc(rs.aln + 1);
 			alnstr[2] = malloc(rs.aln + 1);
 			seqalign_cigar2alnstr(g->qseq->buffer, g->cns->buffer, &rs, g->stack, alnstr, rs.aln);
+			fprintf(stderr, "#RID%d\t%d\t%d\t%d\tCNS\t%d\t%d\t%d\tmat=%d\taln=%d\n", rid, Int(g->qseq->size), rs.qb, rs.qe, Int(g->cns->size), rs.tb, rs.te, rs.mat, rs.aln);
 			fprintf(stderr, "#%s\n#%s\n#%s\n", alnstr[0], alnstr[2], alnstr[1]);
 			free(alnstr[0]);
 			free(alnstr[1]);
 			free(alnstr[2]);
 		}
 		// cigar2rpos
-		clear_and_encap_b1v(g->memp, g->mmoff + (g->cns->size + 1) * sizeof(u2i));
-		rmap = (u2i*)(g->memp->buffer + g->mmoff);
+		clear_and_encap_b1v(g->memp, (g->cns->size + 1) * sizeof(u2i));
+		rmap = (u2i*)(g->memp->buffer);
 		rmap[0] = 0;
-		for(i=1;Int(i)<rs.tb;i++) rmap[i] = (rs.qb - 1) / (rs.tb - i);
+		for(i=1;Int(i)<rs.tb;i++) rmap[i] = i * rs.qb / (rs.tb + 1);
 		x = rs.qb;
 		y = rs.tb;
 		cgs = g->stack->buffer;
@@ -1093,12 +1290,9 @@ static inline void prepare_rd_align_bspoa(BSPOA *g, u2i rid){
 	banded_striped_epi8_seqalign_set_score_matrix(g->matrix[0], g->par->M, g->par->X);
 	clear_and_encap_b1v(g->qprof[0], banded_striped_epi8_seqalign_qprof_size(g->qlen, g->bandwidth));
 	banded_striped_epi8_seqalign_set_query_prof(g->qseq->buffer, g->qlen, g->qprof[0]->buffer, g->bandwidth, g->matrix[0]);
-	banded_striped_epi8_seqalign_set_score_matrix(g->matrix[1], g->par->M + g->par->ref_bonus, g->par->X);
+	banded_striped_epi8_seqalign_set_score_matrix(g->matrix[1], g->par->M + g->par->refbonus, g->par->X);
 	clear_and_encap_b1v(g->qprof[1], banded_striped_epi8_seqalign_qprof_size(g->qlen, g->bandwidth));
 	banded_striped_epi8_seqalign_set_query_prof(g->qseq->buffer, g->qlen, g->qprof[1]->buffer, g->bandwidth, g->matrix[1]);
-	// prepare space for nodes and edges
-	encap_bspoanodev(g->nodes, seqlen + 2);
-	encap_bspoaedgev(g->edges, seqlen + 2);
 	// calculate nct
 	for(i=0;i<g->nodes->size;i++){
 		v = ref_bspoanodev(g->nodes, i);
@@ -1192,6 +1386,13 @@ static inline void prepare_rd_align_bspoa(BSPOA *g, u2i rid){
 			}
 		}
 	}
+	// prepare space for nodes and edges
+	encap_bspoanodev(g->nodes, seqlen + 2);
+	encap_bspoaedgev(g->edges, seqlen + 2);
+	for(i=0;i<seqlen;i++){
+		v = add_node_bspoa(g, rid, i, g->qseq->buffer[i], 0);
+		v->cpos = i;
+	}
 	g->piecewise = banded_striped_epi8_seqalign_get_piecewise(g->par->O, g->par->E, g->par->Q, g->par->P, g->bandwidth);
 	g->mmblk = roundup_times(g->bandwidth * (g->piecewise + 1) + (WORDSIZE + 1) * sizeof(int), WORDSIZE); // us, es, qs, ubegs, qoff, max_score, max_index
 	g->mmcnt = 2; // reserve two blocks
@@ -1201,7 +1402,7 @@ static inline void prepare_rd_align_bspoa(BSPOA *g, u2i rid){
 			v->mmidx = g->mmcnt ++;
 		}
 	}
-	clear_and_encap_b1v(g->memp, g->mmoff + g->mmcnt * g->mmblk);
+	clear_and_encap_b1v(g->memp, g->mmcnt * g->mmblk);
 	u = ref_bspoanodev(g->nodes, BSPOA_HEAD_NODE);
 	{
 		b1i *us, *es, *qs;
@@ -1214,13 +1415,9 @@ static inline void prepare_rd_align_bspoa(BSPOA *g, u2i rid){
 	g->maxoff = -1;
 }
 
-static inline void dpalign_row_update_bspoa(BSPOA *g, b1i *qp, u4i mmidx1, u4i mmidx2, u4i qoff1, u4i qoff2, u1i next_base){
+static inline void dpalign_row_update_bspoa(BSPOA *g, b1i *qp, u4i mmidx1, u4i mmidx2, u4i toff, u4i qoff1, u4i qoff2, u1i next_base){
 	b1i *us[2], *es[2], *qs[2];
 	int W, rh, *ubegs[2];
-	if(next_base > 3){
-		fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-		abort();
-	}
 	W = g->bandwidth / WORDSIZE;
 	dpalign_row_prepare_data(g,      0, us + 0, es + 0, qs + 0, ubegs + 0);
 	__builtin_prefetch(us[0], 0);
@@ -1229,10 +1426,15 @@ static inline void dpalign_row_update_bspoa(BSPOA *g, b1i *qp, u4i mmidx1, u4i m
 	banded_striped_epi8_seqalign_piecex_row_movx(us, es, qs, ubegs, W, qoff2 - qoff1, g->piecewise, g->par->X, g->par->O, g->par->E, g->par->Q, g->par->P);
 	dpalign_row_prepare_data(g, mmidx2, us + 1, es + 1, qs + 1, ubegs + 1);
 	if(qoff1 == qoff2){
-		rh = (qoff1 == 0 && (g->par->alnmode == SEQALIGN_MODE_OVERLAP || mmidx1 == g->nodes->buffer[BSPOA_HEAD_NODE].mmidx))? 0 : SEQALIGN_SCORE_MIN;
+		if(qoff1){
+			rh = SEQALIGN_SCORE_MIN;
+		} else {
+			if(g->par->alnmode == SEQALIGN_MODE_OVERLAP || toff == 0) rh = 0;
+			else if(g->piecewise < 2) rh = g->par->O + g->par->E * toff;
+			else rh = num_max(g->par->O + g->par->E * toff, g->par->Q + g->par->P * toff);
+		}
 	} else if(qoff1 + W * WORDSIZE >= qoff2){
-		//rh = banded_striped_epi8_seqalign_getscore(us[0], ubegs[0], W, qoff2 - qoff1 - 1);
-		rh = ubegs[0][0];
+		rh = ubegs[0][0]; // movx -> aligned
 	} else {
 		rh = SEQALIGN_SCORE_MIN;
 	}
@@ -1240,7 +1442,7 @@ static inline void dpalign_row_update_bspoa(BSPOA *g, b1i *qp, u4i mmidx1, u4i m
 	banded_striped_epi8_seqalign_piecex_row_cal(qoff2, next_base, us, es, qs, ubegs, qp, g->par->O, g->par->E, g->par->Q, g->par->P, W, qoff2 - qoff1, rh, g->piecewise);
 	if(0){
 		dpalign_row_prepare_data(g, mmidx1, us + 0, es + 0, qs + 0, ubegs + 0);
-		banded_striped_epi8_seqalign_piecex_row_verify(mmidx1 != g->nodes->buffer[BSPOA_HEAD_NODE].mmidx, qoff1, g->par->alnmode, W, qoff2 - qoff1, next_base, us, es, qs, ubegs, qp, g->par->O, g->par->E, g->par->Q, g->par->P);
+		banded_striped_epi8_seqalign_piecex_row_verify(toff, qoff1, g->par->alnmode, W, qoff2 - qoff1, next_base, us, es, qs, ubegs, qp, g->par->O, g->par->E, g->par->Q, g->par->P);
 	}
 }
 
@@ -1252,10 +1454,6 @@ static inline void dpalign_row_merge_bspoa(BSPOA *g, u4i mmidx1, u4i mmidx2){
 	dpalign_row_prepare_data(g, mmidx2, us + 1, es + 1, qs + 1, ubegs + 1);
 	__builtin_prefetch(us[1], 1);
 	dpalign_row_prepare_data(g, mmidx2, us + 2, es + 2, qs + 2, ubegs + 2);
-	//dpalign_row_prepare_data(g, 0, us + 2, es + 2, qs + 2, ubegs + 2);
-	//if(g->bandwidth == 64 && mmidx1 == 1 && mmidx2 == 1026){
-		//fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-	//}
 	banded_striped_epi8_seqalign_piecex_row_merge(us, es, qs, ubegs, g->bandwidth / WORDSIZE, g->piecewise);
 }
 
@@ -1265,12 +1463,62 @@ static inline u2i get_rdbase_bspoa(BSPOA *g, u4i rid, u4i pos){
 	return get_basebank(g->seqs->rdseqs, seqoff + pos);
 }
 
+// Hs[1] stores the beg H score, which comes from E or Q
+// Hs[0] return the end H score
+static inline u4i backcal_del_bspoa(BSPOA *g, u4i node, int qb, int Hs[2], int bt, u8v *heap){
+	typedef struct { u8i nidx:24, step:16; int qscr:24; } bcal_t;
+	bspoanode_t *v;
+	bspoaedge_t *e;
+	bcal_t BC, CC;
+	b1i *us, *es, *qs;
+	int *ubegs, q;
+	u4i nidx, eidx, bsoff;
+	bsoff = banded_striped_epi8_pos2idx(g->bandwidth, qb);
+	clear_u8v(heap);
+	BC.nidx = node;
+	BC.qscr = Hs[1];
+	BC.step = 1;
+	array_heap_push((bcal_t*)heap->buffer, heap->size, heap->cap, bcal_t, BC, num_cmp(a.step, b.step));
+	while(heap->size){
+		BC = ((bcal_t*)heap->buffer)[0];
+		array_heap_remove((bcal_t*)heap->buffer, heap->size, heap->cap, bcal_t, 0, num_cmp(a.step, b.step));
+		v = ref_bspoanodev(g->nodes, nidx);
+		dpalign_row_prepare_data(g, v->mmidx, &us, &es, &qs, &ubegs);
+		Hs[0] = banded_striped_epi8_seqalign_getscore(us, ubegs, g->bandwidth / WORDSIZE, qb);
+		if(bt == SEQALIGN_BT_D){
+			q = es[bsoff];
+			if(Hs[0] + q != BC.qscr) continue;
+			if(q == g->par->O + g->par->E){
+				return BC.nidx;
+			}
+		} else {
+			q = qs[bsoff];
+			if(Hs[0] + q != BC.qscr) continue;
+			if(q == g->par->P + g->par->Q){
+				return BC.nidx;
+			}
+		}
+		eidx = v->erev;
+		while(eidx){
+			e = ref_bspoaedgev(g->edges, eidx);
+			eidx = e->next;
+			CC.nidx = e->node;
+			CC.qscr = BC.qscr - ((bt == SEQALIGN_BT_D)? g->par->E : g->par->Q);
+			CC.step = BC.step + 1;
+			array_heap_push((bcal_t*)heap->buffer, heap->size, heap->cap, bcal_t, CC, num_cmp(a.step, b.step));
+		}
+	}
+	fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+	abort();
+	return BSPOA_HEAD_NODE;
+}
+
 static inline int _alignment2graph_bspoa(BSPOA *g, u4i rid, u4i midx, int xe, int *_mat, int *_tail, String **alnstrs){
 	bspoanode_t *u, *v, *w, *n;
 	bspoaedge_t *e;
-	b1i *us, *es, *qs;
+	b1i *us, *es, *qs, q;
 	u4i nidx, eidx, i, seqoff, cpos, W, bt;
-	int x, xb, *ubegs, Hs[2], t, s, seqlen, realn, mat, tail;
+	int x, xb, *ubegs, Hs[3], t, s, seqlen, realn, mat, tail;
 	realn = 0;
 	seqlen = g->seqs->rdlens->buffer[rid];
 	seqoff = g->seqs->rdoffs->buffer[rid];
@@ -1288,7 +1536,7 @@ static inline int _alignment2graph_bspoa(BSPOA *g, u4i rid, u4i midx, int xe, in
 	tail = seqlen - x - 1;
 	if(x + 1 < (int)seqlen){
 		for(i=seqlen-1;(int)i>x;i--){
-			u = add_node_bspoa(g, rid, i, get_rdbase_bspoa(g, rid, i), realn);
+			u = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid] + i);
 			u->cpos = cpos;
 			add_edge_bspoa(g, u, v, 1, 0, NULL);
 			if(alnstrs){
@@ -1301,12 +1549,17 @@ static inline int _alignment2graph_bspoa(BSPOA *g, u4i rid, u4i midx, int xe, in
 	}
 	xb = x;
 	nidx = midx;
-	bt = 0;
+	bt = MAX_U4; // to be calculated
+	n = ref_bspoanodev(g->nodes, nidx);
+	dpalign_row_prepare_data(g, n->mmidx, &us, &es, &qs, &ubegs);
+	Hs[0] = 0;
+	Hs[1] = banded_striped_epi8_seqalign_getscore(us, ubegs, W, x - n->rpos);
+	Hs[2] = 0;
 	while(1){
 		if(nidx == BSPOA_HEAD_NODE || x < 0){
 			xb = x;
 			while(x >= 0){
-				w = add_node_bspoa(g, rid, x, get_rdbase_bspoa(g, rid, x), realn);
+				w = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid] + x);
 				w->cpos = cpos;
 				e = add_edge_bspoa(g, w, v, 1, 0, NULL);
 				if(alnstrs){
@@ -1325,58 +1578,88 @@ static inline int _alignment2graph_bspoa(BSPOA *g, u4i rid, u4i midx, int xe, in
 			}
 			break;
 		}
-		n = ref_bspoanodev(g->nodes, nidx);
-		dpalign_row_prepare_data(g, n->mmidx, &us, &es, &qs, &ubegs);
-		Hs[1] = banded_striped_epi8_seqalign_getscore(us, ubegs, W, x - n->rpos);
-		eidx = n->erev;
-		clear_u4v(g->stack);
-		while(eidx){
-			e = ref_bspoaedgev(g->edges, eidx);
-			eidx = e->next;
-			w = ref_bspoanodev(g->nodes, e->node);
-			if(w->state == 0) continue;
-			dpalign_row_prepare_data(g, w->mmidx, &us, &es, &qs, &ubegs);
-			s = g->matrix[n->ref][g->qseq->buffer[x] * 4 + n->base];
-			if(x < w->rpos || x > Int(g->bandwidth + w->rpos)){
-				push_u4v(g->stack, e->node);
-				push_u4v(g->stack, SEQALIGN_SCORE_MIN);
-				push_u4v(g->stack, SEQALIGN_SCORE_MIN);
-				push_u4v(g->stack, SEQALIGN_SCORE_MIN);
-				continue;
-			} else if(x == w->rpos){
-				Hs[0] = ubegs[0];
-				if(w->rpos == 0 && (g->par->alnmode == SEQALIGN_MODE_OVERLAP || offset_bspoanodev(g->nodes, w) == BSPOA_HEAD_NODE)){
-				} else {
-					s = SEQALIGN_SCORE_MIN;
-				}
-			} else {
-				Hs[0] = banded_striped_epi8_seqalign_getscore(us, ubegs, W, x - w->rpos - 1);
+		if(bt == SEQALIGN_BT_D || bt == SEQALIGN_BT2_D2){
+			if(alnstrs){
+				add_char_string(alnstrs[0], '-');
+				add_char_string(alnstrs[1], bit_base_table[n->base&0x03]);
+				add_char_string(alnstrs[2], '-');
 			}
-			t = ((x - w->rpos) % W) * WORDSIZE + ((x - w->rpos) / W);
-			push_u4v(g->stack, e->node);
-			push_u4v(g->stack, UInt(Hs[0] + s));
-			push_u4v(g->stack, UInt(Hs[0] + us[t] + (es? es[t] : g->par->E)));
-			push_u4v(g->stack, UInt(Hs[0] + (qs? us[t] + qs[t] : SEQALIGN_SCORE_MAX)));
-		}
-		bt = SEQALIGN_BT_I;
-		for(i=0;i<g->stack->size;i+=4){
-			if(Hs[1] == Int(g->stack->buffer[i + 1])){
-				bt = SEQALIGN_BT_M;
-				nidx = g->stack->buffer[i + 0];
+			eidx = n->erev;
+#if DEBUG
+			int found = 0;
+#endif
+			while(eidx){
+				e = ref_bspoaedgev(g->edges, eidx);
+				eidx = e->next;
+				w = ref_bspoanodev(g->nodes, e->node);
+				if(w->state == 0) continue;
+				if(x < w->rpos || x >= Int(w->rpos + g->bandwidth)) continue;
+				dpalign_row_prepare_data(g, w->mmidx, &us, &es, &qs, &ubegs);
+				Hs[0] = banded_striped_epi8_seqalign_getscore(us, ubegs, W, x - w->rpos);
+				if(bt == SEQALIGN_BT_D){
+					q = g->piecewise? es[banded_striped_epi8_pos2idx(g->bandwidth, x - w->rpos)] : g->par->O + g->par->E;
+				} else {
+					q = qs[banded_striped_epi8_pos2idx(g->bandwidth, x - w->rpos)];
+				}
+				if(Hs[0] + q != Hs[1]) continue;
+				nidx = e->node;
+				n = ref_bspoanodev(g->nodes, nidx);
+				if(q == ((bt == SEQALIGN_BT_D)? g->par->O + g->par->E : g->par->Q + g->par->P)){
+					bt = MAX_U4;
+					Hs[1] = Hs[0];
+					Hs[2] = 0;
+				} else {
+					Hs[1] -= ((bt == SEQALIGN_BT_D)? g->par->E : g->par->P);
+					Hs[2] ++;
+				}
+#if DEBUG
+				found = 1;
+#endif
 				break;
 			}
-		}
-		if(bt == SEQALIGN_BT_I){
-			for(i=0;i<g->stack->size;i+=4){
-				if(Hs[1] == Int(g->stack->buffer[i + 2]) || Hs[1] == Int(g->stack->buffer[i + 3])){
-					bt = SEQALIGN_BT_D;
-					nidx = g->stack->buffer[i + 0];
-					break;
-				}
+#if DEBUG
+			if(!found){ // Not found
+				fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+				abort();
 			}
-		}
-		if(bt == SEQALIGN_BT_M){
-			u = add_node_bspoa(g, rid, x, g->qseq->buffer[x], realn);
+#endif
+			continue;
+		} else if(bt == SEQALIGN_BT_I || bt == SEQALIGN_BT2_I2){
+			if(g->piecewise == 2){
+				t = num_max(g->par->O + g->par->E * Hs[2], g->par->Q + g->par->P * Hs[2]);
+			} else {
+				t = g->par->O + g->par->E * Hs[2];
+			}
+			if(x < n->rpos){ // should never happen
+				fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+				abort();
+			}
+			u = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid] + x);
+			u->cpos = cpos;
+			e = add_edge_bspoa(g, u, v, 1, 0, NULL);
+			v = u;
+			if(alnstrs){
+				add_char_string(alnstrs[0], bit_base_table[u->base&0x03]);
+				add_char_string(alnstrs[1], '-');
+				add_char_string(alnstrs[2], '-');
+			}
+			x --;
+			if(Hs[0] + t == Hs[1]){
+				bt = MAX_U4;
+				Hs[1] = Hs[0];
+				Hs[2] = 0;
+			} else if(Hs[0] + t > Hs[1]){
+				fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+				abort();
+			} else if(x >= 0){
+				Hs[0] -= us[banded_striped_epi8_pos2idx(g->bandwidth, x - n->rpos)];
+				Hs[2] ++;
+			} else {
+				// the alignment starts with insertion
+			}
+			continue;
+		} else if(bt == SEQALIGN_BT_M){
+			u = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid] + x);
 			u->cpos = cpos = n->cpos;
 			e = add_edge_bspoa(g, u, v, 1, 0, NULL);
 			if(alnstrs){
@@ -1390,26 +1673,85 @@ static inline int _alignment2graph_bspoa(BSPOA *g, u4i rid, u4i midx, int xe, in
 				mat ++;
 			}
 			v = u;
-		} else if(bt == SEQALIGN_BT_D){
-			if(alnstrs){
-				add_char_string(alnstrs[0], '-');
-				add_char_string(alnstrs[1], bit_base_table[n->base&0x03]);
-				add_char_string(alnstrs[2], '-');
-			}
+			n = ref_bspoanodev(g->nodes, nidx);
+			bt = MAX_U4; // to be calculated
 		} else {
-			u = add_node_bspoa(g, rid, x, g->qseq->buffer[x], realn);
-			u->cpos = cpos;
-			e = add_edge_bspoa(g, u, v, 1, 0, NULL);
-			if(alnstrs){
-				add_char_string(alnstrs[0], bit_base_table[u->base&0x03]);
-				add_char_string(alnstrs[1], '-');
-				add_char_string(alnstrs[2], '-');
+			if(0){
+				if(offset_bspoanodev(g->nodes, n) != nidx){
+					fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+					abort();
+				}
+				dpalign_row_prepare_data(g, n->mmidx, &us, &es, &qs, &ubegs);
+				Hs[0] = banded_striped_epi8_seqalign_getscore(us, ubegs, W, x - n->rpos);
+				if(Hs[0] != Hs[1]){
+					fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+					abort();
+				}
 			}
-			//if(x == 27 && rid == 10){
-				//fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-			//}
-			x --;
-			v = u;
+			s = g->matrix[n->ref][g->qseq->buffer[x] * 4 + n->base];
+			eidx = n->erev;
+			clear_u4v(g->stack);
+			while(eidx){
+				e = ref_bspoaedgev(g->edges, eidx);
+				eidx = e->next;
+				w = ref_bspoanodev(g->nodes, e->node);
+				if(w->state == 0) continue;
+				dpalign_row_prepare_data(g, w->mmidx, &us, &es, &qs, &ubegs);
+				if(x < w->rpos || x > Int(g->bandwidth + w->rpos)){
+					push_u4v(g->stack, e->node);
+					push_u4v(g->stack, SEQALIGN_SCORE_MIN);
+					push_u4v(g->stack, SEQALIGN_SCORE_MIN);
+					push_u4v(g->stack, SEQALIGN_SCORE_MIN);
+					continue;
+				} else if(x == w->rpos){
+					Hs[0] = ubegs[0];
+					if(w->rpos == 0 && (g->par->alnmode == SEQALIGN_MODE_OVERLAP || offset_bspoanodev(g->nodes, w) == BSPOA_HEAD_NODE)){
+					} else {
+						s = SEQALIGN_SCORE_MIN;
+					}
+				} else {
+					Hs[0] = banded_striped_epi8_seqalign_getscore(us, ubegs, W, x - w->rpos - 1);
+				}
+				t = ((x - w->rpos) % W) * WORDSIZE + ((x - w->rpos) / W);
+				push_u4v(g->stack, e->node);
+				push_u4v(g->stack, UInt(Hs[0]));
+				push_u4v(g->stack, UInt(Hs[0] + us[t] + (es? es[t] : g->par->E)));
+				push_u4v(g->stack, UInt(Hs[0] + (qs? us[t] + qs[t] : SEQALIGN_SCORE_MAX)));
+			}
+			bt = SEQALIGN_BT_I;
+			for(i=0;i<g->stack->size;i+=4){
+				if(Hs[1] == Int(g->stack->buffer[i + 1]) + s){
+					bt = SEQALIGN_BT_M;
+					nidx = g->stack->buffer[i + 0];
+					Hs[1] = Int(g->stack->buffer[i + 1]);
+					Hs[2] = 0;
+					break;
+				}
+			}
+			if(bt == SEQALIGN_BT_I){
+				for(i=0;i<g->stack->size;i+=4){
+					if(Hs[1] == Int(g->stack->buffer[i + 2])){
+						bt = SEQALIGN_BT_D;
+						//nidx = g->stack->buffer[i + 0];
+						//n = ref_bspoanodev(g->nodes, nidx);
+						//dpalign_row_prepare_data(g, n->mmidx, &us, &es, &qs, &ubegs);
+						Hs[2] = 1;
+						break;
+					} else if(Hs[1] == Int(g->stack->buffer[i + 3])){
+						bt = SEQALIGN_BT2_D2;
+						//nidx = g->stack->buffer[i + 0];
+						//n = ref_bspoanodev(g->nodes, nidx);
+						//dpalign_row_prepare_data(g, n->mmidx, &us, &es, &qs, &ubegs);
+						Hs[2] = 1;
+						break;
+					}
+				}
+			}
+			if(bt == SEQALIGN_BT_I){
+				Hs[2] = 1;
+				dpalign_row_prepare_data(g, n->mmidx, &us, &es, &qs, &ubegs);
+				Hs[0] = Hs[1] - us[banded_striped_epi8_pos2idx(g->bandwidth, x - n->rpos)];
+			}
 		}
 	}
 	*_mat  = mat;
@@ -1428,6 +1770,11 @@ static inline int align_rd_bspoacore(BSPOA *g, u2i rid){
 	prepare_rd_align_bspoa(g, rid);
 	clear_u4v(g->stack);
 	push_u4v(g->stack, BSPOA_HEAD_NODE);
+	g->nodes->buffer[BSPOA_HEAD_NODE].mpos = 0;
+	for(nidx=1;nidx<g->nodes->size;nidx++){
+		u = ref_bspoanodev(g->nodes, nidx);
+		u->mpos = MAX_U2;
+	}
 	while(pop_u4v(g->stack, &nidx)){
 		u = ref_bspoanodev(g->nodes, nidx);
 		eidx = u->edge;
@@ -1437,6 +1784,9 @@ static inline int align_rd_bspoacore(BSPOA *g, u2i rid){
 			eidx = e->next;
 			//if(e->node == BSPOA_TAIL_NODE) tail = 1;
 			v = ref_bspoanodev(g->nodes, e->node);
+			if(u->mpos + 1 < v->mpos){
+				v->mpos = u->mpos + 1;
+			}
 			if(v->state == 0) continue;
 			if(e->node == BSPOA_TAIL_NODE){
 				dpalign_row_prepare_data(g, u->mmidx, &us, &es, &qs, &ubegs);
@@ -1465,7 +1815,7 @@ static inline int align_rd_bspoacore(BSPOA *g, u2i rid){
 				//if(rid == 1826 && u->mmidx == 2 && mmidx == 2246){
 					//fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
 				//}
-				dpalign_row_update_bspoa(g, g->qprof[v->ref]->buffer, u->mmidx, mmidx, u->rpos, v->rpos, v->base);
+				dpalign_row_update_bspoa(g, g->qprof[v->ref]->buffer, u->mmidx, mmidx, v->mpos, u->rpos, v->rpos, v->base);
 				if(v->vst){
 					dpalign_row_merge_bspoa(g, mmidx, v->mmidx);
 				}
@@ -1492,7 +1842,6 @@ static inline int align_rd_bspoacore(BSPOA *g, u2i rid){
 		abort();
 	}
 #endif
-	g->naln ++;
 	return g->maxscr;
 }
 
@@ -1555,8 +1904,9 @@ static inline void check_dup_edges_bspoa(BSPOA *g){
 static inline u4i sort_nodes_bspoa(BSPOA *g){
 	bspoanode_t *v, *u, *x;
 	bspoaedge_t *e;
-	u4i nseq, nidx, eidx, xidx, moff, ready;
+	u4i nseq, mrow, nidx, eidx, xidx, moff, ready;
 	nseq = g->nrds;
+	mrow = nseq + 2;
 	for(nidx=0;nidx<g->nodes->size;nidx++){
 		u = ref_bspoanodev(g->nodes, nidx);
 		u->vst   = 0;
@@ -1643,8 +1993,8 @@ static inline u4i sort_nodes_bspoa(BSPOA *g){
 	for(nidx=0;nidx<v->mpos;nidx++){
 		push_u2v(g->msaidxs, nidx);
 	}
-	clear_and_encap_u1v(g->msacols, g->msaidxs->size * (nseq + 1));
-	g->msacols->size = g->msaidxs->size * (nseq + 1);
+	clear_and_encap_u1v(g->msacols, g->msaidxs->size * mrow);
+	g->msacols->size = g->msaidxs->size * mrow;
 	memset(g->msacols->buffer, 4, g->msacols->size);
 	for(nidx=0;nidx<g->nodes->size;nidx++){
 		u = ref_bspoanodev(g->nodes, nidx);
@@ -1765,8 +2115,9 @@ static inline u4i merge_siblings_bspoa(BSPOA *g){
 static inline u4i msa_bspoa(BSPOA *g){
 	bspoanode_t *v, *u, *x;
 	bspoaedge_t *e;
-	u4i nseq, nidx, eidx, xidx, ready;
+	u4i nseq, mrow, nidx, eidx, xidx, ready;
 	nseq = g->nrds;
+	mrow = nseq + 2;
 	sort_nodes_bspoa(g);
 	for(nidx=0;nidx<g->nodes->size;nidx++){
 		u = ref_bspoanodev(g->nodes, nidx);
@@ -1798,7 +2149,7 @@ static inline u4i msa_bspoa(BSPOA *g){
 					do {
 						x = ref_bspoanodev(g->nodes, xidx);
 						if(xidx != BSPOA_TAIL_NODE && x->aux == 0){
-							set_u1v(g->msacols, x->mpos * (nseq + 1) + x->rid, (x->base) & 0x03);
+							set_u1v(g->msacols, x->mpos * mrow + x->rid, (x->base) & 0x03);
 						}
 						if(x->erev){
 							push_u4v(g->stack, xidx);
@@ -1826,14 +2177,16 @@ static inline u4i msa_bspoa(BSPOA *g){
 // quick and dirty, major bases
 static inline void simple_cns_bspoa(BSPOA *g){
 	bspoanode_t *v;
-	u4i nseq, mlen, pos, cpos, rid, i, b;
+	u4i nseq, mrow, mlen, pos, cpos, rid, i, b;
 	u2i bcnts[6];
 	u1i *qs;
 	nseq = g->nrds;
+	mrow = nseq + 2;
 	mlen = g->msaidxs->size;
 	clear_u1v(g->cns);
+	clear_u1v(g->qlt);
 	for(pos=0;pos<mlen;pos++){
-		qs = g->msacols->buffer + g->msaidxs->buffer[pos] * (nseq + 1);
+		qs = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
 		memset(bcnts, 0, 6 * sizeof(u2i));
 		for(rid=0;rid<nseq;rid++){
 			bcnts[qs[rid]] ++;
@@ -1843,17 +2196,22 @@ static inline void simple_cns_bspoa(BSPOA *g){
 			if(bcnts[i] >= bcnts[b]) b = i;
 		}
 		qs[nseq] = b;
-		if(b < 4) push_u1v(g->cns, b);
+		qs[nseq + 1] = 0;
+		if(b < 4){
+			push_u1v(g->cns, b);
+			push_u1v(g->qlt, 0);
+		}
 	}
 	for(rid=0;rid<nseq;rid++){
 		cpos = 0;
-		v = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - 1);
+		//v = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - 1);
+		v = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid]);
 		for(pos=0;pos<mlen;pos++){
-			if(g->msacols->buffer[g->msaidxs->buffer[pos] * (nseq + 1) + rid] < 4){
+			if(g->msacols->buffer[g->msaidxs->buffer[pos] * mrow + rid] < 4){
 				v->cpos = cpos;
-				v --;
+				v ++;
 			}
-			if(g->msacols->buffer[g->msaidxs->buffer[pos] * (nseq + 1) + nseq] < 4) cpos ++;
+			if(g->msacols->buffer[g->msaidxs->buffer[pos] * mrow + nseq] < 4) cpos ++;
 		}
 	}
 	ref_bspoanodev(g->nodes, BSPOA_HEAD_NODE)->cpos = 0;
@@ -1864,16 +2222,18 @@ static inline float cns_bspoa(BSPOA *g){
 	typedef struct {float sc[5]; u1i bt, lb;} dp_t;
 	bspoanode_t *v;
 	dp_t *dps[5], *dp[5], *lp;
-	float logp;
+	float ret, errs[5], errd, log10;
 	u1i a, b, c, d, e, f, *r, *qs, *ts, *bs[10];
-	u4i nseq, mlen, cpos, rid, i, mpsize;
+	u4i nseq, mrow, mlen, cpos, rid, i, mpsize;
 	int pos;
 	nseq = g->nrds;
+	mrow = nseq + 2;
+	log10 = log(10);
 	mlen = g->msaidxs->size;
 	mpsize = (mlen + 1) * 5 * sizeof(dp_t);
 	mpsize += nseq * 10; // bs[0/1/2/3/4] is the state of the last read non-N base vs cns[A/C/G/T/-], M/I/D = 0/1/2; 5-9 is a backup
-	clear_and_encap_b1v(g->memp, g->mmoff + mpsize);
-	r = (u1i*)(g->memp->buffer + g->mmoff);
+	clear_and_encap_b1v(g->memp, mpsize);
+	r = (u1i*)(g->memp->buffer);
 	for(i=0;i<5;i++){
 		dps[i] = (dp_t*)r;
 		r += (mlen + 1) * sizeof(dp_t);
@@ -1886,7 +2246,7 @@ static inline float cns_bspoa(BSPOA *g){
 		memset(bs[i], 0, nseq);
 	}
 	for(pos=mlen-1;pos>=0;pos--){
-		qs = g->msacols->buffer + g->msaidxs->buffer[pos] * (nseq + 1);
+		qs = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
 		for(a=0;a<=4;a++) dp[a] = dps[a] + pos;
 		for(e=0;e<=4;e++){
 			lp = dps[e] + pos + 1;
@@ -1898,6 +2258,17 @@ static inline float cns_bspoa(BSPOA *g){
 				d = bs[e][rid];
 				ts = g->dptable + b * 5 + c * 25 + d * 125;
 				for(a=0;a<=4;a++) dp[a]->sc[e] += g->dpvals[ts[a] >> 3];
+#if 0
+				if(pos == 119 && e == 2){
+					u4i xx = 0;
+					for(a=1;a<=4;a++){
+						if(dp[a]->sc[e] > dp[xx]->sc[e]) xx = a;
+					}
+					for(a=0;a<=4;a++){
+						fprintf(stderr, "[DEBUG] RID%u:%c\tREF:%c%c\tps[%d]\t%0.3f\t%0.3f\t%c\n", rid, "ACGT-"[b], "ACGT-"[a], "ACGT-"[e], ts[a] >> 3, g->dpvals[ts[a] >> 3], dp[a]->sc[e], " *"[xx == a]);
+					}
+				}
+#endif
 			}
 		}
 		for(a=0;a<=4;a++){
@@ -1909,8 +2280,11 @@ static inline float cns_bspoa(BSPOA *g){
 			dps[a][pos].lb = (a < 4)? a : lp->lb;
 			for(rid=0;rid<nseq;rid++){
 				b = qs[rid];
-				if(b > 4) continue;
-				f = g->dptable[a + b * 5 + lp->lb * 25 + bs[dp[a]->bt][rid]];
+				if(b > 4){
+					bs[a + 5][rid] = 0;
+					continue;
+				}
+				f = g->dptable[a + b * 5 + lp->lb * 25 + bs[dp[a]->bt][rid] * 125];
 				bs[a + 5][rid] = f & 0x7;
 			}
 		}
@@ -1924,13 +2298,34 @@ static inline float cns_bspoa(BSPOA *g){
 			c = a;
 		}
 	}
-	logp = dps[c][0].sc[dps[c][0].bt];
+	ret = dps[c][0].sc[dps[c][0].bt];
 	clear_u1v(g->cns);
+	clear_u1v(g->qlt);
 	for(i=0;i<mlen;i++){
-		r = g->msacols->buffer + g->msaidxs->buffer[i] * (nseq + 1) + nseq;
-		*r = c;
-		if(*r < 4){
-			push_u1v(g->cns, *r);
+		r = g->msacols->buffer + g->msaidxs->buffer[i] * mrow + nseq;
+		//cal base quality
+		errd = 0;
+		for(e=0;e<=4;e++){
+			d = dps[e][i].bt;
+			errs[e] = dps[e][i].sc[d] - dps[d][i + 1].sc[dps[d][i + 1].bt];
+			errd = num_min(errd, errs[e]);
+		}
+		//fprintf(stderr, "[%u:%c] %0.4f\t%0.4f\t%0.4f\t%0.4f\t%0.4f\n", i, "ACGT-"[c], errs[0], errs[1], errs[2], errs[3], errs[4]);
+		for(e=0;e<=4;e++) errs[e] -= errd;
+		//fprintf(stderr, "[%u:%c] %0.4f\t%0.4f\t%0.4f\t%0.4f\t%0.4f\n", i, "ACGT-"[c], errs[0], errs[1], errs[2], errs[3], errs[4]);
+		for(e=0;e<=4;e++) errs[e] = exp(errs[e]);
+		//fprintf(stderr, "[%u:%c] %0.4f\t%0.4f\t%0.4f\t%0.4f\t%0.4f\n", i, "ACGT-"[c], errs[0], errs[1], errs[2], errs[3], errs[4]);
+		errd = 0;
+		for(e=0;e<=4;e++) errd += errs[e];
+		//fprintf(stderr, "[%u:%c] errd=%0.8f\n", i, "ACGT-"[c], errd);
+		errd = 1 - (errs[c] / errd); // base quality in prob.
+		//fprintf(stderr, "[%u:%c] errd=%0.8f log=%0.4f log10=%0.4f phred=%0.4f\n", i, "ACGT-"[c], errd, log(errd), log10, - 10 * log(errd) / log10);
+		errd = - (10 * log(errd) / log10); // phred score
+		r[0] = c;
+		r[1] = (int)num_min(errd, 40.0);
+		if(r[0] < 4){
+			push_u1v(g->cns, r[0]);
+			push_u1v(g->qlt, r[1]);
 		}
 		c = dps[c][i].bt;
 	}
@@ -1942,7 +2337,7 @@ static inline float cns_bspoa(BSPOA *g){
 					if(dps[a][pos].sc[e] < minp) minp = dps[a][pos].sc[e];
 				}
 			}
-			fprintf(stderr, "[%d]\t%c\t%0.2f", pos, "ACGT- "[g->msacols->buffer[g->msaidxs->buffer[pos] * (nseq + 1) + nseq]], minp);
+			fprintf(stderr, "[%d]\t%c\t%0.2f", pos, "ACGT- "[g->msacols->buffer[g->msaidxs->buffer[pos] * mrow + nseq]], minp);
 			for(a=0;a<=4;a++){
 				fprintf(stderr, "\t%c:[", "ACGT-"[a]);
 				for(e=0;e<=4;e++){
@@ -1958,149 +2353,117 @@ static inline float cns_bspoa(BSPOA *g){
 	// set node_t->cpos to the position on cns, useful in bandwidth
 	for(rid=0;rid<nseq;rid++){
 		cpos = 0;
-		v = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - 1);
+		//v = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - 1);
+		v = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid]);
 		for(pos=0;pos<Int(mlen);pos++){
-			if(g->msacols->buffer[g->msaidxs->buffer[pos] * (nseq + 1) + rid] < 4){
+			if(g->msacols->buffer[g->msaidxs->buffer[pos] * mrow + rid] < 4){
 				v->cpos = cpos;
-				v --;
+				v ++;
 			}
-			if(g->msacols->buffer[g->msaidxs->buffer[pos] * (nseq + 1) + nseq] < 4) cpos ++;
+			if(g->msacols->buffer[g->msaidxs->buffer[pos] * mrow + nseq] < 4) cpos ++;
 		}
 	}
 	ref_bspoanodev(g->nodes, BSPOA_HEAD_NODE)->cpos = 0;
 	ref_bspoanodev(g->nodes, BSPOA_TAIL_NODE)->cpos = g->cns->size;
-	return logp;
+	return ret;
+}
+
+static inline void hp_adjust_bspoa(BSPOA *g){
+	bspoanode_t *u, *v;
+	u4i rid, nseq, mrow, mlen, i, p, pos, uidx;
+	u2i *rps;
+	u1i *col;
+	nseq = g->nrds;
+	mrow = nseq + 2;
+	mlen = g->msaidxs->size;
+	clear_and_encap_b1v(g->memp, nseq * sizeof(u2i));
+	rps = (u2i*)g->memp->buffer;
+	for(rid=0;rid<nseq;rid++){
+		rps[rid] = g->seqs->rdlens->buffer[rid];
+	}
+	for(pos=mlen-1;pos!=MAX_U4;pos--){
+		col = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
+		uidx = MAX_U4;
+		for(rid=0;rid<nseq;rid++){
+			if(col[rid] < 4){
+				rps[rid] --;
+				if(uidx == MAX_U4 && col[rid] == col[nseq]){
+					uidx = g->ndoffs->buffer[rid] + rps[rid];
+				}
+			}
+		}
+		if(col[nseq] >= 4) continue;
+#if DEBUG
+		if(uidx == MAX_U4){
+			fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+			abort();
+		}
+#endif
+		for(rid=0;rid<nseq;rid++){
+			if(col[rid] == 4 && rps[rid] && get_basebank(g->seqs->rdseqs, g->seqs->rdoffs->buffer[rid] + rps[rid] - 1) == col[nseq]){
+				rps[rid] --;
+				for(i=pos-1;;i--){
+					p = g->msaidxs->buffer[i] * mrow + rid;
+					if(g->msacols->buffer[p] >= 4) continue;
+#if DEBUG
+					if(g->msacols->buffer[p] != col[nseq]){
+						fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+						abort();
+					}
+#endif
+					g->msacols->buffer[p] = rps[rid]? 4 : 5;
+					col[rid] = col[nseq];
+					u = ref_bspoanodev(g->nodes, uidx);
+					v = seperate_node_bspoa(g, rid, rps[rid]);
+					merge_node_bspoa(g, rid, u, v);
+					break;
+				}
+			}
+		}
+	}
 }
 
 static inline void end_bspoa(BSPOA *g){
-	bspoanode_t *v;
-	u4i i, nidx, tigger;
+	u4i nidx, tigger;
 	int score;
-	clear_u1v(g->cns);
-	if(g->seqs->nseq == 0) return;
-	clear_u4v(g->ndoffs);
-	nidx = g->nodes->size;
-	for(i=0;i<g->seqs->nseq;i++){
-		push_u4v(g->ndoffs, nidx);
-		nidx += g->seqs->rdlens->buffer[i];
+	if(g->seqs->nseq == 0){
+		clear_u1v(g->cns);
+		clear_u1v(g->qlt);
+		return;
 	}
-	push_u4v(g->ndoffs, nidx);
+	clear_u4v(g->ndoffs);
 	tigger = g->par->bwtrigger;
+	nidx = g->nodes->size;
 	for(g->nrds=0;g->nrds<g->seqs->nseq;g->nrds++){
 		//if(g->par->refmode == 0 && tigger > 0 && ((g->nrds + 1) % tigger) == 0){
-		if(g->par->refmode == 0 && (g->bwtrigger || (tigger > 0 && g->nrds + 1 == tigger))){
+		if(g->par->refmode == 0 && (g->bwtrigger || (tigger > 0 && g->nrds == tigger))){
 			// generate MSA+CNS per bwtrigger reads, the cpos of node is needed to perform banded alignment
 			g->bwtrigger = 1;
 			msa_bspoa(g);
 			simple_cns_bspoa(g);
 		}
+		push_u4v(g->ndoffs, nidx);
+		nidx += g->seqs->rdlens->buffer[g->nrds];
 		score = align_rd_bspoa(g, g->nrds);
 	}
+	push_u4v(g->ndoffs, nidx);
 	// generate MSA and CNS
-	//merge_siblings_bspoa(g);
 	msa_bspoa(g);
 	cns_bspoa(g);
-	// realign, mimic cigars
-	if(0 && g->par->refmode == 0 && g->par->remsa){ // discard this kind of remsa
-		clear_u4v(g->cigars);
-		clear_u4v(g->cgbs);
-		clear_u4v(g->cges);
-		for(i=0;i<g->seqs->nseq;i++){
-			u4i nb, ne, ni, x, cg, op, sz;
-			nb = g->ndoffs->buffer[i]; // nb > 1
-			ne = g->ndoffs->buffer[i + 1];
-			push_u4v(g->cgbs, g->cigars->size);
-			x = 0;
-			cg = 0;
-			op = 0;
-			sz = 0;
-			for(ni=ne-1;ni>=nb;ni--){
-				v = ref_bspoanodev(g->nodes, ni);
-				if(v->cpos == x){
-					op = 1; // I
-					sz = 1;
-					if((cg & 0xf) == op){
-						cg += sz << 4;
-					} else if(sz){
-						if(cg >> 4) push_u4v(g->cigars, cg);
-						cg = (sz << 4) | op;
-					}
-				} else if(v->cpos > x){
-					op = 0; // M
-					sz = 1;
-					x ++;
-					if((cg & 0xf) == op){
-						cg += sz << 4;
-					} else if(sz){
-						if(cg >> 4) push_u4v(g->cigars, cg);
-						cg = (sz << 4) | op;
-					}
-					if(v->cpos > x){
-						op = 2; // D
-						sz = v->cpos - x;
-						x += sz;
-						if((cg & 0xf) == op){
-							cg += sz << 4;
-						} else if(sz){
-							if(cg >> 4) push_u4v(g->cigars, cg);
-							cg = (sz << 4) | op;
-						}
-					}
-				} else {
-					fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-					abort();
-				}
-			}
-			if(x < g->cns->size){
-				op = 2; // D
-				sz = g->cns->size - x;
-				if((cg & 0xf) == op){
-					cg += sz << 4;
-				} else if(sz){
-					if(cg >> 4) push_u4v(g->cigars, cg);
-					cg = (sz << 4) | op;
-				}
-			}
-			if(cg >> 4) push_u4v(g->cigars, cg);
-			push_u4v(g->cges, g->cigars->size);
-			if(bspoa_cns_debug){
-				u4i *cgs, cln;
-				cgs = g->cigars->buffer + g->cgbs->buffer[i];
-				cln = g->cges->buffer[i]-g->cgbs->buffer[i];
-				fflush(stdout);
-				fprintf(stderr, "CIGAR[%d]\t", i);
-				for(ni=0;ni<cln;ni++){
-					fprintf(stderr, "%d%c", cgs[ni] >> 4, "MIDNSHP=X"[(cgs[ni] & 0xf)]);
-				}
-				fprintf(stderr, "\n");
-			}
-		}
-		g->par->refmode = 1;
-		beg_bspoacore(g, g->cns->buffer, g->cns->size, 0);
-		clear_u4v(g->ndoffs);
-		nidx = g->nodes->size;
-		for(i=0;i<g->seqs->nseq;i++){
-			push_u4v(g->ndoffs, nidx);
-			nidx += g->seqs->rdlens->buffer[i];
-		}
-		push_u4v(g->ndoffs, nidx);
-		for(g->nrds=0;g->nrds<g->seqs->nseq;g->nrds++){
-			score = align_rd_bspoa(g, g->nrds);
-		}
-		g->par->refmode = 0;
-		cns_bspoa(g);
-	}
+	hp_adjust_bspoa(g);
+	cns_bspoa(g);
 }
 
 static inline void check_msa_bspoa(BSPOA *g){
-	u2i nseq, mlen, rid, pos, len;
+	u2i nseq, mrow, mlen, rid, pos, len;
 	u1i c;
 	nseq = g->nrds;
+	mrow = nseq + 2;
 	mlen = g->msaidxs->size;
 	for(rid=0;rid<nseq;rid++){
 		len = 0;
 		for(pos=0;pos<mlen;pos++){
-			c = g->msacols->buffer[g->msaidxs->buffer[pos] * (nseq + 1) + rid];
+			c = g->msacols->buffer[g->msaidxs->buffer[pos] * mrow + rid];
 			if(c < 4){
 				if(c != get_basebank(g->seqs->rdseqs, g->seqs->rdoffs->buffer[rid] + len)){
 					fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
@@ -2116,53 +2479,88 @@ static inline void check_msa_bspoa(BSPOA *g){
 	}
 }
 
+static inline void check_graph_cov_bspoa(BSPOA *g){
+	bspoanode_t *v, *x;
+	bspoaedge_t *e;
+	u4i node, eidx, xidx, ncov, ecov;
+	for(node=2;node<g->nodes->size;node++){
+		v = ref_bspoanodev(g->nodes, node);
+		if(v->header != node) continue;
+		ncov = 1;
+		xidx = v->aligned;
+		while(xidx != node){
+			x = ref_bspoanodev(g->nodes, xidx);
+			ncov ++;
+			xidx = x->aligned;
+		}
+		ecov = 0;
+		eidx = v->edge;
+		while(eidx){
+			e = ref_bspoaedgev(g->edges, eidx);
+			eidx = e->next;
+			ecov += e->cov;
+		}
+		if(ecov != ncov){
+			print_aligned_nodes_bspoa(g, node, stderr);
+			print_node_edges_bspoa(g, node, 0, stderr);
+			fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+			abort();
+		}
+		ecov = 0;
+		eidx = v->erev;
+		while(eidx){
+			e = ref_bspoaedgev(g->edges, eidx);
+			eidx = e->next;
+			ecov += e->cov;
+		}
+		if(ecov != ncov){
+			print_aligned_nodes_bspoa(g, node, stderr);
+			print_node_edges_bspoa(g, node, 1, stderr);
+			fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+			abort();
+		}
+	}
+}
+
 // return updated msaend on whole MSA
-static inline u2i local_remsa_bspoa(BSPOA *g, u2i msabeg, u2i msaend, u2i *_rbs, u2i *_res, BSPOA *lg){
+static inline u2i local_remsa_bspoa(BSPOA *g, u2i msabeg, u2i msaend, u2i *_rbs, u2i *_res, u2i *_ridxs, float *_scores, u1i *_ld, BSPOA *lg){
 	float *scores;
-	u4i nseq, mlen, i, rid, pos, mpsize;
+	u4i nseq, mrow, mlen, i, rid, pos;
 	u2i *rbs, *res, *ridxs;
-	u1i *r, *qs, f, lc, *ld;
+	u1i *qs, f, lc, *ld;
 	nseq = g->nrds;
+	mrow = nseq + 2;
 	mlen = g->msaidxs->size;
 	msaend = num_min(msaend, mlen);
-	mpsize  = nseq * sizeof(float);
-	mpsize += nseq * sizeof(u2i);
 	if(_rbs) rbs = _rbs;
-	else { mpsize += nseq * sizeof(u2i); rbs = NULL; }
-	if(_res) res = _res;
-	else { mpsize += nseq * sizeof(u2i); res = NULL; }
-	mpsize += nseq * sizeof(u1i);
-	clear_and_encap_b1v(g->memp, g->mmoff + mpsize);
-	r = (u1i*)(g->memp->buffer + g->mmoff);
-	scores = (float*)r; r += nseq * sizeof(float);
-	memset(scores, 0, nseq * sizeof(float));
-	ridxs = (u2i*)r; r += nseq * sizeof(u2i);
-	for(rid=0;rid<nseq;rid++) ridxs[rid] = rid;
-	if(rbs == NULL){
-		rbs = (u2i*)r; r += nseq * sizeof(u2i);
-		memset(rbs, 0, nseq * sizeof(u2i));
-	}
-	if(res == NULL){
-		res = (u2i*)r; r += nseq * sizeof(u2i);
-	}
-	ld = r; r += nseq;
-	memset(ld, 0, nseq);
-	if(_rbs == NULL){
+	else {
+		rbs = (u2i*)alloca(nseq * sizeof(u2i));
 		for(pos=0;pos<msabeg;pos++){
-			qs = g->msacols->buffer + g->msaidxs->buffer[pos] * (nseq + 1);
+			qs = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
 			for(rid=0;rid<nseq;rid++){
 				if(qs[rid] < 4) rbs[rid] ++;
 			}
 		}
 	}
+	if(_res) res = _res;
+	else res = (u2i*)alloca(nseq * sizeof(u2i));
+	if(_ridxs) ridxs = _ridxs;
+	else ridxs = (u2i*)alloca(nseq * sizeof(u2i));
+	for(rid=0;rid<nseq;rid++) ridxs[rid] = rid;
+	if(_scores) scores = _scores;
+	else scores = (float*)alloca(nseq * sizeof(float));
+	memset(scores, 0, nseq * sizeof(float));
+	if(_ld) ld = _ld;
+	else ld = (u1i*)alloca(nseq * sizeof(u1i));
+	memset(ld, 0, nseq);
 	lc = 4;
 	memcpy(res, rbs, nseq * sizeof(u2i));
 	for(pos=msabeg;pos<msaend;pos++){
-		qs = g->msacols->buffer + g->msaidxs->buffer[pos] * (nseq + 1);
+		qs = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
 		for(rid=0;rid<nseq;rid++){
 			if(qs[rid] < 4) res[rid] ++;
 			f = g->dptable[qs[nseq] + qs[rid] * 5 + lc * 25 + ld[rid] * 125];
-			scores[rid] += g->dpvals[f >> 3];
+			scores[rid] += g->dpvals[f >> 3] * qs[nseq + 1]; // probs * cns_phred_quality
 			ld[rid] = f & 0x7;
 		}
 	}
@@ -2172,9 +2570,6 @@ static inline u2i local_remsa_bspoa(BSPOA *g, u2i msabeg, u2i msaend, u2i *_rbs,
 	lg->par->remsa     = 0;
 	lg->par->nrec      = 0;
 	lg->par->bwtrigger = 0;
-	if(bspoa_cns_debug){
-		fflush(stdout); fprintf(stderr, "LRMSA: %d - %d\n", msabeg, msaend);
-	}
 	for(i=0;i<nseq;i++){
 		rid = ridxs[i];
 		if(bspoa_cns_debug){
@@ -2185,7 +2580,7 @@ static inline u2i local_remsa_bspoa(BSPOA *g, u2i msabeg, u2i msaend, u2i *_rbs,
 	}
 	end_bspoa(lg);
 	if(bspoa_cns_debug){
-		print_msa_bspoa(lg, stderr);
+		print_msa_sline_bspoa(lg, stderr);
 	}
 	// copy the local graph
 	{
@@ -2199,13 +2594,15 @@ static inline u2i local_remsa_bspoa(BSPOA *g, u2i msabeg, u2i msaend, u2i *_rbs,
 			u->vst = 0;
 			if(u->header == nidx){
 				rid = ridxs[u->rid];
-				vidxs[0] = g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + u->pos + 1);
+				//vidxs[0] = g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + u->pos + 1);
+				vidxs[0] = g->ndoffs->buffer[rid] + rbs[rid] + u->pos;
 				vidxs[1] = vidxs[0];
 				xidx = u->aligned;
 				while(xidx != nidx){
 					x = ref_bspoanodev(lg->nodes, xidx);
 					rid = ridxs[x->rid];
-					vidxs[2] = g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + x->pos + 1);
+					//vidxs[2] = g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + x->pos + 1);
+					vidxs[2] = g->ndoffs->buffer[rid] + rbs[rid] + x->pos;
 					ref_bspoanodev(g->nodes, vidxs[1])->aligned = vidxs[2];
 					ref_bspoanodev(g->nodes, vidxs[1])->header  = vidxs[0];
 					vidxs[1] = vidxs[2];
@@ -2221,16 +2618,18 @@ static inline u2i local_remsa_bspoa(BSPOA *g, u2i msabeg, u2i msaend, u2i *_rbs,
 		while(pop_u4v(lg->stack, &nidx)){
 			u = ref_bspoanodev(lg->nodes, nidx);
 			rid = ridxs[u->rid];
-			vidxs[0] = (nidx < 2)? 0 : g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + u->pos + 1);
+			//vidxs[0] = (nidx < 2)? 0 : g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + u->pos + 1);
+			vidxs[0] = (nidx < 2)? 0 : g->ndoffs->buffer[rid] + rbs[rid] + u->pos;
 			eidx = u->edge;
 			while(eidx){
 				e = ref_bspoaedgev(lg->edges, eidx);
 				eidx = e->next;
 				v = ref_bspoanodev(lg->nodes, e->node);
 				rid = ridxs[v->rid];
-				vidxs[1] = (e->node < 2)? 0 : g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + v->pos + 1);
+				//vidxs[1] = (e->node < 2)? 0 : g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + v->pos + 1);
+				vidxs[1] = (e->node < 2)? 0 : g->ndoffs->buffer[rid] + rbs[rid] + v->pos;
 				if(vidxs[0] && vidxs[1]){
-					add_edge_bspoa(g, ref_bspoanodev(g->nodes, vidxs[0]), ref_bspoanodev(g->nodes, vidxs[1]), e->cov, e->is_aux, NULL);
+					hadd_edge_bspoa(g, ref_bspoanodev(g->nodes, vidxs[0]), ref_bspoanodev(g->nodes, vidxs[1]), e->cov, e->is_aux, NULL);
 				}
 				v->vst ++;
 				if(v->vst == v->nin){
@@ -2257,9 +2656,13 @@ static inline u2i local_remsa_bspoa(BSPOA *g, u2i msabeg, u2i msaend, u2i *_rbs,
 				xidx = v->aligned;
 				rid = ridxs[v->rid];
 				if(rbs[rid] == res[rid]) continue;
-				vidxs[1] = g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + v->pos + 1);
-				if(rbs[rid]){
-					vidxs[0] = g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + v->pos + 1 - 1);
+				//vidxs[1] = g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + v->pos + 1);
+				vidxs[1] = g->ndoffs->buffer[rid] + rbs[rid] + v->pos;
+				if(v->pos){ // within lg
+					continue;
+				} else if(rbs[rid]){
+					//vidxs[0] = g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + v->pos + 1 - 1);
+					vidxs[0] = g->ndoffs->buffer[rid] + rbs[rid] + v->pos - 1;
 				} else {
 					vidxs[0] = BSPOA_HEAD_NODE;
 				}
@@ -2279,18 +2682,23 @@ static inline u2i local_remsa_bspoa(BSPOA *g, u2i msabeg, u2i msaend, u2i *_rbs,
 				xidx = v->aligned;
 				rid = ridxs[v->rid];
 				if(rbs[rid] == res[rid]) continue;
-				vidxs[0] = g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + v->pos + 1);
-				if(res[rid] < g->seqs->rdlens->buffer[rid]){
-					vidxs[1] = g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + v->pos + 1 + 1);
+				//vidxs[0] = g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + v->pos + 1);
+				vidxs[0] = g->ndoffs->buffer[rid] + rbs[rid] + v->pos;
+				if(rbs[rid] + v->pos + 1 < res[rid]){ // within lg
+					continue;
+				} else if(res[rid] < g->seqs->rdlens->buffer[rid]){
+					//vidxs[1] = g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - (rbs[rid] + v->pos + 1 + 1);
+					vidxs[1] = g->ndoffs->buffer[rid] + rbs[rid] + v->pos + 1;
 				} else {
 					vidxs[1] = BSPOA_TAIL_NODE;
 				}
 				hadd_edge_bspoa(g, ref_bspoanodev(g->nodes, vidxs[0]), ref_bspoanodev(g->nodes, vidxs[1]), 1, 0, NULL);
 			} while(xidx != e->node);
 		}
-#if DEBUG
+#if 0
 		check_all_node_edges_bspoa(g); // TODO: debug
 		check_dup_edges_bspoa(g);
+		check_graph_cov_bspoa(g);
 #endif
 	}
 	// copy the local msa
@@ -2299,10 +2707,11 @@ static inline u2i local_remsa_bspoa(BSPOA *g, u2i msabeg, u2i msaend, u2i *_rbs,
 		u1i *src, *dst;
 		msalen = num_min(msaend - msabeg, Int(lg->msaidxs->size));
 		for(pos=0;pos<msalen;pos++){
-			src = lg->msacols->buffer + lg->msaidxs->buffer[pos] * (nseq + 1);
-			dst = g->msacols->buffer + g->msaidxs->buffer[msabeg + pos] * (nseq + 1);
+			src = lg->msacols->buffer + lg->msaidxs->buffer[pos] * mrow;
+			dst = g->msacols->buffer + g->msaidxs->buffer[msabeg + pos] * mrow;
 			for(i=0;i<nseq;i++) dst[ridxs[i]] = src[i];
-			dst[nseq] = src[nseq];
+			dst[nseq + 0] = src[nseq + 0];
+			dst[nseq + 1] = src[nseq + 1];
 		}
 		if(msalen == lg->msaidxs->size){
 			for(i=msabeg+lg->msaidxs->size;i<msaend;i++) push_u2v(g->msacycs, g->msaidxs->buffer[i]);
@@ -2311,8 +2720,8 @@ static inline u2i local_remsa_bspoa(BSPOA *g, u2i msabeg, u2i msaend, u2i *_rbs,
 		} else {
 			colmax = g->msacycs->size + g->msaidxs->size;
 			if(g->msacycs->size < lg->msaidxs->size - (msaend - msabeg)){
-				encap_u1v(g->msacols, (lg->msaidxs->size - (msaend - msabeg) - g->msacycs->size) * (nseq + 1));
-				g->msacols->size += (lg->msaidxs->size - (msaend - msabeg) - g->msacycs->size) * (nseq + 1);
+				encap_u1v(g->msacols, (lg->msaidxs->size - (msaend - msabeg) - g->msacycs->size) * mrow);
+				g->msacols->size += (lg->msaidxs->size - (msaend - msabeg) - g->msacycs->size) * mrow;
 			}
 			encap_u2v(g->msaidxs, lg->msaidxs->size - (msaend - msabeg));
 			memmove(g->msaidxs->buffer + msabeg + lg->msaidxs->size, g->msaidxs->buffer + msaend, (g->msaidxs->size - msaend) * sizeof(u2i));
@@ -2323,69 +2732,74 @@ static inline u2i local_remsa_bspoa(BSPOA *g, u2i msabeg, u2i msaend, u2i *_rbs,
 				} else {
 					g->msaidxs->buffer[msabeg + msalen] = colmax ++;
 				}
-				src = lg->msacols->buffer + lg->msaidxs->buffer[msalen] * (nseq + 1);
-				dst = g->msacols->buffer + g->msaidxs->buffer[msabeg + msalen] * (nseq + 1);
+				src = lg->msacols->buffer + lg->msaidxs->buffer[msalen] * mrow;
+				dst = g->msacols->buffer + g->msaidxs->buffer[msabeg + msalen] * mrow;
 				for(i=0;i<nseq;i++) dst[ridxs[i]] = src[i];
-				dst[nseq] = src[nseq];
+				dst[nseq + 0] = src[nseq + 0];
+				dst[nseq + 1] = src[nseq + 1];
 				msalen ++;
 			}
 		}
-#if DEBUG
+#if 0
 		check_msa_bspoa(g);
 #endif
 	}
 	return msabeg + lg->msaidxs->size;
 }
 
-static inline void remsa_bspoa(BSPOA *g, u2i wsz, float varfreqs[2], BSPOA *lg){
-	u8i mmoff;
-	u2i nseq, i, j, ac, bc, cc, msabeg, msaend, cnscnt, varcnts[2], bs[6], rb, *rbs, *res;
-	u1i *col, *sts;
+static inline u4i cal_complexity_col_bspoa(u1i *col, u2i nseq){
+	u4i x;
+	u2i i, j,  bs[6];
+	memset(bs, 0, 6 * sizeof(u2i));
+	for(i=0;i<nseq;i++){
+		bs[col[i]] ++;
+	}
+	if(bs[5] == nseq){
+		return MAX_U4;
+	}
+	x = 0;
+	for(i=0;i<5;i++){
+		for(j=i+1;j<5;j++){
+			x += bs[i] * bs[j];
+		}
+	}
+	return x;
+}
+
+static inline void remsa_bspoa(BSPOA *g, BSPOA *lg){
+	u8i mpsize;
+	float *scores;
+	u2i nseq, mrow, i, ac, bc, cc, wsz, msabeg, msaend, cnscnt, rb, *rbs, *res, *ridxs;
+	u1i *col, *sts, *ld, *mem;
 	int moffset;
+	wsz = g->par->rma_win;
 	if(g->msaidxs->size < wsz) return;
 	nseq = g->nrds;
-	if(varfreqs[0] <= 0) varfreqs[0] = 0.05;
-	if(varfreqs[1] <= 0) varfreqs[1] = 0.20;
-	varcnts[0] = (varfreqs[0] * nseq + 0.5);
-	varcnts[1] = varfreqs[1] * nseq;
-	mmoff = g->mmoff;
-	clear_and_encap_b1v(g->memp, g->mmoff + g->msaidxs->size * sizeof(u1i));
-	sts = (u1i*)(g->memp->buffer + g->mmoff);
-	g->mmoff += roundup_times(g->msaidxs->size * sizeof(u1i), WORDSIZE);
-	if(bspoa_cns_debug){
-		fflush(stdout);
-		fprintf(stderr, "REMSA[CUTOFF] %d - %d\n", varcnts[0], varcnts[1]);
-	}
+	mrow = nseq + 2;
+	mpsize  = roundup_times(g->msaidxs->size * sizeof(u1i), WORDSIZE);
+	mpsize += roundup_times(3 * nseq * sizeof(u2i), WORDSIZE);
+	mpsize += roundup_times(nseq * sizeof(float), WORDSIZE);
+	mpsize += roundup_times(nseq, WORDSIZE);
+	clear_and_encap_b1v(g->memp, mpsize);
+	mem = (u1i*)g->memp->buffer;
+	sts = (u1i*)mem; mem += roundup_times(g->msaidxs->size * sizeof(u1i), WORDSIZE);
+	rbs = (u2i*)mem; mem += roundup_times(3 * nseq * sizeof(u2i), WORDSIZE);
+	res = rbs + nseq;
+	ridxs = res + nseq;
+	scores = (float*)mem; mem += roundup_times(nseq * sizeof(float), WORDSIZE);
+	ld = (u1i*)mem;
+	memset(rbs, 0, nseq * sizeof(u2i));
+	memset(res, 0, nseq * sizeof(u2i));
 	for(i=0;i<g->msaidxs->size;i++){
-		col = g->msacols->buffer + g->msaidxs->buffer[i] * (nseq + 1);
-		memset(bs, 0, 6 * sizeof(u2i));
-		for(j=0;j<nseq;j++){
-			bs[col[j]] ++;
-		}
-		if(bs[0] >= bs[1]){
-			ac = 0;
-			bc = 1;
-		} else {
-			ac = 1;
-			bc = 0;
-		}
-		for(j=2;j<4;j++){
-			if(bs[j] >= bs[ac]){
-				bc = ac;
-				ac = j;
-			} else if(bs[j] > bs[bc]){
-				bc = j;
-			}
-		}
-		if(bs[bc] <= varcnts[0] && col[nseq] < 4) sts[i] = 0;
-		else if(bs[bc] >= varcnts[1]) sts[i] = 2;
-		else sts[i] = 1;
-		if(bspoa_cns_debug > 1){
-			fprintf(stderr, "REMSA[STS%d] %c %d\t%d\t%d\t%d\t%d=%d\n", i, "ACGT- "[col[nseq]], bs[0], bs[1], bs[2], bs[3], bs[bc], sts[i]);
-		}
+		col = g->msacols->buffer + g->msaidxs->buffer[i] * mrow;
+		cc  = col[nseq + 1]; // quality score
+		if(cc <= g->par->qltlo) sts[i] = 2;
+		else if(cc <= g->par->qlthi || col[nseq] == 4) sts[i] = 1;
+		else sts[i] = 0;
 	}
-	rbs = calloc(nseq, sizeof(u2i));
-	res = calloc(nseq, sizeof(u2i));
+#if 0
+	check_graph_cov_bspoa(g);
+#endif
 	rb = 0;
 	msabeg = msaend = 0;
 	moffset = 0;
@@ -2397,7 +2811,7 @@ static inline void remsa_bspoa(BSPOA *g, u2i wsz, float varfreqs[2], BSPOA *lg){
 		while(bc < g->msaidxs->size && sts[bc+moffset] == 2) bc ++;
 		msaend = bc;
 		cnscnt = 0;
-		while(ac > msabeg && cnscnt < wsz){
+		while(ac > msabeg && cnscnt < 2 * wsz){
 			if(sts[ac+moffset] == 0) cnscnt ++;
 			ac --;
 		}
@@ -2408,13 +2822,13 @@ static inline void remsa_bspoa(BSPOA *g, u2i wsz, float varfreqs[2], BSPOA *lg){
 		cc = 0;
 		while(1){
 			cnscnt = 0;
-			while(bc < g->msaidxs->size && cnscnt < wsz){
+			while(bc < g->msaidxs->size && cnscnt < 2 * wsz){
 				if(sts[bc+moffset] == 0) cnscnt ++;
 				else if(sts[bc+moffset] == 2) break;
 				bc ++;
 			}
 			cc += cnscnt;
-			if(bc >= g->msaidxs->size || cnscnt >= wsz || cc >= wsz * 4) break;
+			if(bc >= g->msaidxs->size || cnscnt >= wsz || cc >= wsz * 8) break;
 			bc ++;
 		}
 		if(cnscnt < wsz){
@@ -2424,27 +2838,27 @@ static inline void remsa_bspoa(BSPOA *g, u2i wsz, float varfreqs[2], BSPOA *lg){
 		msabeg = ac;
 		cc = bc;
 		while(rb < msabeg){
-			col = g->msacols->buffer + g->msaidxs->buffer[rb] * (nseq + 1);
+			col = g->msacols->buffer + g->msaidxs->buffer[rb] * mrow;
 			for(i=0;i<nseq;i++){
 				if(col[i] < 4) rbs[i] ++;
 			}
 			rb ++;
 		}
-		bc = local_remsa_bspoa(g, msabeg, cc, rbs, res, lg);
-		moffset = moffset + bc - cc;
+		if(bspoa_cns_debug){
+			fflush(stdout); fprintf(stderr, "LRMSA: %d(%d) - %d(%d)\n", msabeg + 1, msabeg + moffset + 1, cc + 1, cc + moffset + 1);
+		}
+		bc = local_remsa_bspoa(g, msabeg, cc, rbs, res, ridxs, scores, ld, lg);
+		moffset = moffset + cc - bc;
 		msabeg = bc;
 		//memcpy(rbs, res, nseq * sizeof(u2i));
-		if(bspoa_cns_debug){
+		if(0 && bspoa_cns_debug){
 			fflush(stderr);
-			print_msa_bspoa(g, stdout);
+			print_msa_sline_bspoa(g, stdout);
 			fflush(stdout);
 		}
 	}
-	g->mmoff = mmoff;
 	msa_bspoa(g);
 	cns_bspoa(g);
-	free(rbs);
-	free(res);
 }
 
 #endif
