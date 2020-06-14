@@ -204,7 +204,7 @@ typedef void (*striped_epi2_seqedit_set_query_prof_func)(u1i *qseq, u4i qlen, b1
 typedef void (*striped_epi2_seqedit_row_init_func)(b1i *us[2], u4i W, int mode);
 typedef void (*striped_epi2_seqedit_row_cal_func)(u4i rbeg, b1i *us[2][2], b1i *hs, b1i *qprof, u4i W, u1i base, int mode);
 typedef seqalign_result_t (*striped_epi2_seqedit_backtrace_func)(b1i *uts[2], u4i W, int mode, u1i *qseq, int qend, u1i *tseq, int tend, u4v *cigars);
-static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u8i mmoff, u4v *cigars, int mode, int verbose);
+static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int mode, int verbose);
 
 // only support short query (<=128*127=16256)
 // edit-overlap mode
@@ -352,7 +352,7 @@ typedef u4i (*seqalign_cigar2alnstr_func)(u1i *qseq, u1i *tseq, seqalign_result_
 
 // implementation of overlap alignment for two sequences
 // bandwidth should be times of WORDSIZE
-static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u8i mmoff, u4v *cigars, int mode, u4i bandwidth, b1i matrix[16], b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, int verbose);
+static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int mode, u4i bandwidth, b1i matrix[16], b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, int verbose);
 
 static inline void striped_epi2_seqedit_set_query_prof(u1i *qseq, u4i qlen, b1i *qprof){
 	b1i *qp;
@@ -870,7 +870,7 @@ static inline void striped_epi2_seqedit_row_merge(u2i sbegs[2], b1i *us[3][2], b
 #endif
 }
 
-static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u8i mmoff, u4v *cigars, int mode, int verbose){
+static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int mode, int verbose){
 	striped_epi2_seqedit_set_query_prof_func set_qprof;
 	striped_epi2_seqedit_row_init_func       row_init;
 	striped_epi2_seqedit_row_cal_func        row_cal;
@@ -893,8 +893,8 @@ static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qle
 	mpsize += W * WORDSIZE; // hs[]
 	//mpsize += 2 * W * WORDSIZE + 3 * 2 * 8 * WORDSIZE; // TODO: remove it after debug
 	if(mempool){
-		clear_and_encap_b1v(mempool, mmoff + mpsize);
-		memp = mempool->buffer + mmoff + WORDSIZE;
+		clear_and_encap_b1v(mempool, mpsize);
+		memp = mempool->buffer + WORDSIZE;
 		mempb = NULL;
 	} else {
 		mempb = malloc(mpsize);
@@ -2652,7 +2652,7 @@ static inline u4i seqalign_cigar2alnstr(u1i *qseq, u1i *tseq, seqalign_result_t 
 	return z;
 }
 
-static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u8i mmoff, u4v *cigars, int mode, u4i bandwidth, b1i matrix[16], b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, int verbose){
+static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int mode, u4i bandwidth, b1i matrix[16], b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, int verbose){
 	banded_striped_epi8_seqalign_set_query_prof_func    set_qprof;
 	banded_striped_epi8_seqalign_piecex_row_init_func   row_init;
 	banded_striped_epi8_seqalign_piecex_row_mov_func    row_movx;
@@ -2701,8 +2701,8 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq,
 	mpsize += bandwidth * ((piecewise + 1)); // us[0][], es[0][], qs[0][]
 	mpsize += roundup_times((tlen + 1) * sizeof(int), WORDSIZE); // row offset
 	if(mempool){
-		clear_and_encap_b1v(mempool, mmoff + mpsize);
-		memp = mempool->buffer + mmoff + WORDSIZE;
+		clear_and_encap_b1v(mempool, mpsize);
+		memp = mempool->buffer + WORDSIZE;
 		mempb = NULL;
 	} else {
 		mempb = malloc(mpsize);
