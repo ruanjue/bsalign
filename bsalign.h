@@ -303,7 +303,7 @@ typedef void (*banded_striped_epi8_seqalign_piecex_row_init_func)(b1i *us, b1i *
 // converting from [1] to [0]
 // make the two row aligned
 // ubegs is the absolute scores for the first striped block
-typedef void (*banded_striped_epi8_seqalign_piecex_row_mov_func)(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs[2], u4i W, u4i mov, int piecewise, b1i nt_min, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2);
+typedef void (*banded_striped_epi8_seqalign_piecex_row_mov_func)(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs[2], u4i W, u4i mov, int piecewise, b1i nt_max, b1i nt_min, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2);
 
 // core func to update row scores, from us[0] to us[1]
 // rh is the score of H(-1, y - 1), 0, or SCORE_MIN, please see banded_striped_epi8_seqalign_pairwise
@@ -1062,7 +1062,7 @@ static inline void banded_striped_epi8_seqalign_piecex_row_check_ubegs(b1i *us, 
 #endif
 
 // movx can be any value
-static inline void banded_striped_epi8_seqalign_piecex_row_movx(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs[2], u4i W, u4i movx, int piecewise, b1i nt_min, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2){
+static inline void banded_striped_epi8_seqalign_piecex_row_movx(b1i *us[2], b1i *es[2], b1i *qs[2], int *ubegs[2], u4i W, u4i movx, int piecewise, b1i nt_max, b1i nt_min, b1i gapo1, b1i gape1, b1i gapo2, b1i gape2){
 	xint u, x, UBS[4], SHUFF1, SHUFF2;
 	u4i i, div, mov, cyc;
 	u1i shuff[WORDSIZE];
@@ -1184,9 +1184,9 @@ static inline void banded_striped_epi8_seqalign_piecex_row_movx(b1i *us[2], b1i 
 		b  = i / W;
 		b2 = (i + d) / W;
 		if(piecewise == 2){
-			c = num_min(nt_min, gapo2 + gape2) - 1 + (gapo2 + gape2);
+			c = num_min(nt_min, gapo2 + gape2) - 1 - nt_max + (gapo2 + gape2);
 		} else {
-			c = num_min(nt_min, gapo1 + gape1) - 1 + (gapo1 + gape1);
+			c = num_min(nt_min, gapo1 + gape1) - 1 - nt_max + (gapo1 + gape1);
 		}
 		us[0][(i % W) * WORDSIZE + (i / W)] = c;
 		a ++;
@@ -2755,7 +2755,7 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq,
 				else rh = num_max(gapo1 + gape1 * i, gapo2 + gape2 * i);
 			}
 		}
-		row_movx(us, es, qs, ubegs, W, mov, piecewise, smin, gapo1, gape1, gapo2, gape2); // mov and swap
+		row_movx(us, es, qs, ubegs, W, mov, piecewise, smax, smin, gapo1, gape1, gapo2, gape2); // mov and swap
 #if 0
 		{
 			b1i *tus[2], *tes[2], *tqs[2];
