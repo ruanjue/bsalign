@@ -2551,7 +2551,7 @@ static inline u4i banded_striped_epi8_seqalign_piecex_backcal(u1i *qseq, u1i *ts
 			cg = _push_cigar_bsalign(cigars, cg, 0, 1);
 			Hs[1] = Hs[0];
 		} else if(bt == SEQALIGN_BT_I){
-			for(sz=1;Int(sz)+roffs[rs->tb]<rs->qb;sz++){
+			for(sz=1;Int(sz)+roffs[rs->tb]<=rs->qb;sz++){
 				if(piecewise == 2){
 					t = num_max(gapo1 + sz * gape1, gapo2 + sz * gape2);
 				} else {
