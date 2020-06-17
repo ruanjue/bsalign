@@ -10,71 +10,310 @@ int usage(){
 	"Program: bsalign\n"
 	"Version: %s\n"
 	"Author : Jue Ruan <ruanjue@caas.cn>\n"
-	" bsalign implements banded-striped-SIMD alignment, supports both pairwise and multiple sequence alignment\n"
-	"Usage: bsalign [options] <input files>\n"
-	"options:\n"
-	" -h          Show this document\n"
-	" -m <string> align mode: {global/extend/*overlap*},{edit/*align*/poa} [overlap,align]\n"
-	"             edit mode is to find minimal DNA edit distance, ultra-fast, but only supports global alignmment\n"
-	"             align mode is normal pairwise sequence alignment\n"
-	"             poa mode is multiple sequences alignment\n"
-	"             accepts 'edit,global', 'poa,extend' and others\n"
-	" -W <int>    Bandwidth, 0: full length of query [0]\n"
-	"             in POA mode, when set trigger bigger than zero to invoke banded alignment, the default option -W is 128\n"
+	"Usage  : bsalign <cmd> [options]\n"
+	"\n"
+	"commands:\n"
+	" align       Pairwise alignment implemented by 8-bit encoded Banded Striped SIMD\n"
+	" edit        Pairwise alignment using edit distance implemented by 2-bit encoded Striped algorithm\n"
+	" poa         Multiple alignment implemented by 8-bit encoded Banded Striped SIMD Partial Order Alignment\n"
+	"Tips:\n"
+	"# To invoke affine gap cost pairwise/multiple alignment\n"
+	"  -M 2 -X 6 -O 3 -E 2 -Q 0 -P 0\n"
+	"# To invoke 2-piece gap cost pairwise/multiple alignment\n"
+	"  -M 2 -X 6 -O 3 -E 2 -Q 8 -P 1\n"
+	"\n", TOSTR(VERSION)
+	);
+	return 1;
+}
+
+int usage_align(){
+	fprintf(stdout,
+	"Usage: bsalign align [options] <input fasta/q.gz file>\n"
+	" -m <string> Align mode: global/extend/overlap, [overlap]\n"
+	" -W <int>    Bandwidth, 0: full length, [0]\n"
 	" -M <int>    Score for match, [2]\n"
 	" -X <int>    Penalty for mismatch, [6]\n"
 	" -O <int>    Penalty for gap open, [3]\n"
 	" -E <int>    Penalty for gap extension, [2]\n"
 	" -Q <int>    Penalty for gap2 open, [0]\n"
 	" -P <int>    Penalty for gap2 extension, [0]\n"
-	" -G <sting>  parameters for POA, <tag>=<val>\n"
-	"             Defaults: refmode=0,refbonus=1,nrec=20,trigger=10,remsa=1,rma_win=5,qltlo=30,qlthi=35,\\"
-	"                       M=1,X=2,O=0,E=1,Q=0,P=0,psub=0.05,pins=0.05,pdel=0.10,piex=0.25,pdex=0.30,hins=0.10,hdel=0.20\n"
-	"              refmode: whether the first sequences is reference sequence, useful in polishing\n"
-	"              refbonus: base match score on reference will be M + refbonus\n"
-	"              nrec: every query read is aligning against previous <nrec> reads on graph, 0 to all the previous\n"
-	"              trigger: when <trigger> > 0 and <-W> < query length, genrates CNS per after <trigger> reads, and trigger banded alignment\n"
-	"              remsa: based on consensus sequence, do MSA again in <-W> band\n"
-	"              rma_win: min length of flinking high quality cns bases\n"
-	"              qltlo: trigger local remsa when cns quality <= qltlo\n"
-	"              qlthi: high cns quality\n"
-	"              M/X/O/E/Q/P: score in local realignment, can be different with whole poa alignment\n"
-	"              psub/pins/pdel/piex/pdex: probs. of mis/ins/del/ins_ext/del_ext\n"
-	"              hins/hdel: probs of ins/del in homopolymer region\n"
-	"             To polish long reads' consensus with short reads, you might set\n"
-	"              -G refmode=1,remsa=0,trigger=0,nrec=0,psub=0.02,pins=0.005,pdel=0.005,piex=0.002,pdex=0.002,hins=0.005,hdel=0.005\n"
-	" -R <int>    repeat times (for benchmarking) [1]\n"
+	" -R <int>    Repeat times (for benchmarking) [1]\n"
 	" -v          Verbose\n"
-	"Tips:\n"
-	"# To invoke affine gap cost pairwise/multiple alignment\n"
+	"# To invoke linear gap cost pairwise alignment\n"
+	"  -M 2 -X 6 -O 0 -E 3 -Q 0 -P 0\n"
+	"# To invoke affine gap cost pairwise alignment\n"
 	"  -M 2 -X 6 -O 3 -E 2 -Q 0 -P 0\n"
-	"# To invoke 2-piece gap cost pairwise/multiple alignment\n"
+	"# To invoke 2-piece gap cost pairwise alignment\n"
 	"  -M 2 -X 6 -O 3 -E 2 -Q 8 -P 1\n"
-	"# different sequencing error pattern\n"
-	" tunes psub,pins,pdel,piex,pdex, hins, hdel\n"
-	"# Treats with reads having large offsets with each other in multiple alignment\n"
-	" set '-G trigger=0' to disable banded alignment, will be slower\n"
-	"\n", TOSTR(VERSION)
 	);
 	return 1;
 }
 
-int main(int argc, char **argv){
+int usage_edit(){
+	fprintf(stdout,
+	"Usage: bsalign edit [option] <input fasta/q.gz file>\n"
+	" -R <int>    Repeat times (for benchmarking) [1]\n"
+	" -v          Verbose\n"
+	);
+	return 1;
+}
+
+int usage_poa(){
+	fprintf(stdout,
+	"Usage: bsalign poa [option] <input fasta/q.gz file>\n"
+	" -m <string> Align mode: global/extend/overlap, [global]\n"
+	" -W <int>    Bandwidth, 0: full length, [128]\n"
+	" -M <string> Score for match for poa and local realignment [2,1]\n"
+	" -X <string> Penalty for mismatch, [6,2]\n"
+	" -O <string> Penalty for gap open, [3,0]\n"
+	" -E <string> Penalty for gap extension, [2,1]\n"
+	" -Q <string> Penalty for gap2 open, [0,0]\n"
+	" -P <string> Penalty for gap2 extension, [0,0]\n"
+	" -G <string> misc parameters for POA, <tag>=<val>\n"
+	"             Defaults: refmode=0,refbonus=1,nrec=20,trigger=10,remsa=1,rma_win=5,qltlo=30,qlthi=35,\\"
+	"                       psub=0.05,pins=0.05,pdel=0.10,piex=0.25,pdex=0.30,hins=0.10,hdel=0.20\n"
+	"              refmode: whether the first sequences is reference sequence, useful in polishing\n"
+	"              refbonus: base match score on reference will be M + refbonus\n"
+	"              nrec: every query read is aligning against previous <nrec> reads on graph, 0 to all the previous\n"
+	"              trigger: when <trigger> > 0 and <-W> < query length, genrates CNS per after <trigger> reads, and trigger banded alignment\n"
+	"              remsa: based on consensus sequence, invoke local realignment\n"
+	"              rma_win: min length of flinking high quality cns bases\n"
+	"              qltlo: trigger local remsa when cns quality <= qltlo\n"
+	"              qlthi: high cns quality\n"
+	"              psub/pins/pdel/piex/pdex: for consensus, probs. of mis/ins/del/ins_ext/del_ext\n"
+	"              hins/hdel: probs of ins/del in homopolymer region\n"
+	" -R <int>    Repeat times (for benchmarking) [1]\n"
+	" -v          Verbose\n"
+	"# different sequencing error pattern\n"
+	" tunes psub,pins,pdel,piex,pdex, hins, hdel\n"
+	"# Treats with reads having large offsets with each other in multiple alignment\n"
+	" set '-G trigger=0' to disable banded alignment, will be slower\n"
+	);
+	return 1;
+}
+
+int main_align(int argc, char **argv){
+	FileReader *fr;
+	SeqBank *seqs;
+	BioSequence *seq;
+	BSPOAPar par;
+	seqalign_result_t rs;
+	u4v *cigars;
+	u1v *qseq, *tseq;
+	b1v *mempool;
+	b1i mtx[16];
+	char *alnstr[3], *str, *tok;
+	int c, mode, _W, W, repm, repn, verbose, strn;
+	par  = DEFAULT_BSPOA_PAR;
+	mode = SEQALIGN_MODE_OVERLAP;
+	_W = 0;
+	par.M = 2; par.X = -6; par.O = -3; par.E = -2; par.Q = 0; par.P = 0;
+	repm = 1;
+	verbose = 0;
+	while((c = getopt(argc, argv, "hm:W:M:X:O:E:Q:P:R:v")) != -1){
+		switch(c){
+			case 'm':
+			str = optarg;
+			while(str && *str){
+				tok = index(str, ','); if(tok) *tok = '\0';
+				if(strcasecmp(str, "GLOBAL") == 0) mode = SEQALIGN_MODE_GLOBAL;
+				else if(strcasecmp(str, "EXTEND") == 0) mode = SEQALIGN_MODE_EXTEND;
+				else if(strcasecmp(str, "OVERLAP") == 0) mode = SEQALIGN_MODE_OVERLAP;
+				else return usage_align();
+				if(tok) str = tok + 1;
+				else break;
+			}
+			break;
+			case 'W': par.bandwidth = _W = atoi(optarg); break;
+			case 'M': par.M = atoi(optarg); break;
+			case 'X': par.X = - atoi(optarg); break;
+			case 'O': par.O = - atoi(optarg); break;
+			case 'E': par.E = - atoi(optarg); break;
+			case 'Q': par.Q = - atoi(optarg); break;
+			case 'P': par.P = - atoi(optarg); break;
+			case 'R': repm = atoi(optarg); break;
+			case 'v': verbose ++; break;
+			default: return usage_align();
+		}
+	}
+	if(optind < argc){
+		fr = open_all_filereader(argc - optind, argv + optind, 0);
+	} else {
+		return usage_align();
+	}
+	banded_striped_epi8_seqalign_set_score_matrix(mtx, par.M, par.X);
+	seqs = init_seqbank();
+	seq  = init_biosequence();
+	mempool = init_b1v(1024);
+	qseq   = init_u1v(1024);
+	tseq   = init_u1v(1024);
+	cigars = init_u4v(64);
+	alnstr[0] = NULL;
+	alnstr[1] = NULL;
+	alnstr[2] = NULL;
+	strn = 0;
+	while(readseq_filereader(fr, seq)){
+		if(seq->seq->size == 0) continue;
+		push_seqbank(seqs, seq->tag->string, seq->tag->size, seq->seq->string, seq->seq->size);
+		if(seqs->nseq == 2){
+			if(_W <= 0) W = roundup_times(seqs->rdlens->buffer[0], 16);
+			else W = _W;
+			clear_and_encap_u1v(qseq,  seqs->rdlens->buffer[0]);
+			bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[0], seqs->rdlens->buffer[0], qseq->buffer);
+			qseq->size = seqs->rdlens->buffer[0];
+			clear_and_encap_u1v(tseq,  seqs->rdlens->buffer[1]);
+			bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[1], seqs->rdlens->buffer[1], tseq->buffer);
+			tseq->size = seqs->rdlens->buffer[1];
+			for(repn=1;repn<repm;repn++){ // for benchmarking
+				rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode, W, mtx, par.O, par.E, par.Q, par.P, verbose);
+			}
+			rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode, W, mtx, par.O, par.E, par.Q, par.P, verbose);
+			if(rs.mat){
+				if(strn < rs.aln){
+					strn = rs.aln;
+					alnstr[0] = realloc(alnstr[0], strn + 1);
+					alnstr[1] = realloc(alnstr[1], strn + 1);
+					alnstr[2] = realloc(alnstr[2], strn + 1);
+				}
+				if(verbose){
+					u4i ci;
+					fprintf(stderr, "CIGAR: %d\t", rs.aln);
+					for(ci=0;ci<cigars->size;ci++){
+						if((cigars->buffer[ci] >> 4) == 1){
+							fprintf(stderr, "%c", "MIDNSHP=X*"[cigars->buffer[ci] & 0xf]);
+						} else {
+							fprintf(stderr, "%d%c", cigars->buffer[ci] >> 4, "MIDNSHP=X*"[cigars->buffer[ci] & 0xf]);
+						}
+					}
+					fprintf(stderr, "\n");
+				}
+				seqalign_cigar2alnstr(qseq->buffer, tseq->buffer, &rs, cigars, alnstr, strn);
+				fprintf(stdout, "%s\t%d\t+\t%d\t%d\t%s\t%d\t+\t%d\t%d\t", seqs->rdtags->buffer[0], Int(qseq->size), rs.qb, rs.qe, seqs->rdtags->buffer[1], Int(tseq->size), rs.tb, rs.te);
+				fprintf(stdout, "%d\t%.3f\t%d\t%d\t%d\t%d\n", rs.score, 1.0 * rs.mat / rs.aln, rs.mat, rs.mis, rs.ins, rs.del);
+				fprintf(stdout, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
+			}
+			clear_seqbank(seqs);
+		}
+	}
+	free_u1v(qseq);
+	free_u1v(tseq);
+	free_b1v(mempool);
+	free_u4v(cigars);
+	if(strn){
+		free(alnstr[0]);
+		free(alnstr[1]);
+		free(alnstr[2]);
+	}
+	free_biosequence(seq);
+	close_filereader(fr);
+	free_seqbank(seqs);
+	return 0;
+}
+
+int main_edit(int argc, char **argv){
+	FileReader *fr;
+	SeqBank *seqs;
+	BioSequence *seq;
+	seqalign_result_t rs;
+	u4v *cigars;
+	u1v *qseq, *tseq;
+	b1v *mempool;
+	char *alnstr[3];
+	int c, repm, repn, verbose, strn;
+	repm = 1;
+	verbose = 0;
+	while((c = getopt(argc, argv, "hR:v")) != -1){
+		switch(c){
+			case 'R': repm = atoi(optarg); break;
+			case 'v': verbose ++; break;
+			default: return usage_edit();
+		}
+	}
+	if(optind < argc){
+		fr = open_all_filereader(argc - optind, argv + optind, 0);
+	} else {
+		return usage_edit();
+	}
+	seqs = init_seqbank();
+	seq  = init_biosequence();
+	mempool = init_b1v(1024);
+	qseq   = init_u1v(1024);
+	tseq   = init_u1v(1024);
+	cigars = init_u4v(64);
+	alnstr[0] = NULL;
+	alnstr[1] = NULL;
+	alnstr[2] = NULL;
+	strn = 0;
+	while(readseq_filereader(fr, seq)){
+		if(seq->seq->size == 0) continue;
+		push_seqbank(seqs, seq->tag->string, seq->tag->size, seq->seq->string, seq->seq->size);
+		if(seqs->nseq == 2){
+			clear_and_encap_u1v(qseq,  seqs->rdlens->buffer[0]);
+			bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[0], seqs->rdlens->buffer[0], qseq->buffer);
+			qseq->size = seqs->rdlens->buffer[0];
+			clear_and_encap_u1v(tseq,  seqs->rdlens->buffer[1]);
+			bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[1], seqs->rdlens->buffer[1], tseq->buffer);
+			tseq->size = seqs->rdlens->buffer[1];
+			for(repn=1;repn<repm;repn++){ // for benchmarking
+				rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, SEQALIGN_MODE_GLOBAL, verbose);
+			}
+			rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, SEQALIGN_MODE_GLOBAL, verbose);
+			if(rs.mat){
+				if(strn < rs.aln){
+					strn = rs.aln;
+					alnstr[0] = realloc(alnstr[0], strn + 1);
+					alnstr[1] = realloc(alnstr[1], strn + 1);
+					alnstr[2] = realloc(alnstr[2], strn + 1);
+				}
+				if(verbose){
+					u4i ci;
+					fprintf(stderr, "CIGAR: %d\t", rs.aln);
+					for(ci=0;ci<cigars->size;ci++){
+						if((cigars->buffer[ci] >> 4) == 1){
+							fprintf(stderr, "%c", "MIDNSHP=X*"[cigars->buffer[ci] & 0xf]);
+						} else {
+							fprintf(stderr, "%d%c", cigars->buffer[ci] >> 4, "MIDNSHP=X*"[cigars->buffer[ci] & 0xf]);
+						}
+					}
+					fprintf(stderr, "\n");
+				}
+				seqalign_cigar2alnstr(qseq->buffer, tseq->buffer, &rs, cigars, alnstr, strn);
+				fprintf(stdout, "%s\t%d\t+\t%d\t%d\t%s\t%d\t+\t%d\t%d\t", seqs->rdtags->buffer[0], Int(qseq->size), rs.qb, rs.qe, seqs->rdtags->buffer[1], Int(tseq->size), rs.tb, rs.te);
+				fprintf(stdout, "%d\t%.3f\t%d\t%d\t%d\t%d\n", rs.score, 1.0 * rs.mat / rs.aln, rs.mat, rs.mis, rs.ins, rs.del);
+				fprintf(stdout, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
+			}
+			clear_seqbank(seqs);
+		}
+	}
+	free_u1v(qseq);
+	free_u1v(tseq);
+	free_b1v(mempool);
+	free_u4v(cigars);
+	if(strn){
+		free(alnstr[0]);
+		free(alnstr[1]);
+		free(alnstr[2]);
+	}
+	free_biosequence(seq);
+	close_filereader(fr);
+	free_seqbank(seqs);
+	return 0;
+}
+
+int main_poa(int argc, char **argv){
 	FileReader *fr;
 	SeqBank *seqs;
 	BioSequence *seq;
 	BSPOAPar par, rpar;
+	BSPOA *g, *lg;
 	regex_t reg;
 	regmatch_t mats[3];
 	char *str, *tok;
-	//int c, mode, _W, W, mat, mis, gapo1, gape1, gapo2, gape2, repm, repn, verbose;
-	int c, mode, _W, W, repm, repn, verbose;
+	int c, repm, repn, verbose;
 	int msabeg, msaend, msacnt, rmabeg, rmaend;
 	par  = DEFAULT_BSPOA_PAR;
 	rpar = DEFAULT_BSPOA_PAR;
-	mode = SEQALIGN_MODE_OVERLAP;
-	_W = 0;
-	par.M = 2; par.X = -6; par.O = -2; par.E = -2; par.Q = 0; par.P = 0;
+	par.M = 2; par.X = -6; par.O = -3; par.E = -2; par.Q = 0; par.P = 0;
 	rpar.M = 1; rpar.X = -2; rpar.O = 0; rpar.E = -1; rpar.Q = 0; rpar.P = 0;
 	repm = 1;
 	verbose = 0;
@@ -92,30 +331,27 @@ int main(int argc, char **argv){
 	}
 	while((c = getopt(argc, argv, "hvm:W:M:X:O:E:Q:P:G:T:R:")) != -1){
 		switch(c){
-			case 'h': return usage();
+			case 'h': return usage_poa();
 			case 'v': verbose ++; break;
 			case 'm':
 			str = optarg;
 			while(str && *str){
 				tok = index(str, ','); if(tok) *tok = '\0';
-				if(strcasecmp(str, "GLOBAL") == 0) mode = (mode & 0xF8) | SEQALIGN_MODE_GLOBAL;
-				else if(strcasecmp(str, "EXTEND") == 0) mode = (mode & 0xF8) | SEQALIGN_MODE_EXTEND;
-				else if(strcasecmp(str, "OVERLAP") == 0) mode = (mode & 0xF8) | SEQALIGN_MODE_OVERLAP;
-				else if(strcasecmp(str, "EDIT") == 0) mode = (mode & 0x7) | SEQALIGN_MODE_EDIT;
-				else if(strcasecmp(str, "ALIGN") == 0) mode = mode & 0x7;
-				else if(strcasecmp(str, "POA") == 0) mode = (mode & 0x7) | SEQALIGN_MODE_POA;
-				else return usage();
+				if(strcasecmp(str, "GLOBAL") == 0) par.alnmode = SEQALIGN_MODE_GLOBAL;
+				else if(strcasecmp(str, "EXTEND") == 0) par.alnmode = SEQALIGN_MODE_EXTEND;
+				else if(strcasecmp(str, "OVERLAP") == 0) par.alnmode = SEQALIGN_MODE_OVERLAP;
+				else return usage_poa();
 				if(tok) str = tok + 1;
 				else break;
 			}
 			break;
-			case 'W': par.bandwidth = _W = atoi(optarg); break;
-			case 'M': par.M = atoi(optarg); break;
-			case 'X': par.X = - atoi(optarg); break;
-			case 'O': par.O = - atoi(optarg); break;
-			case 'E': par.E = - atoi(optarg); break;
-			case 'Q': par.Q = - atoi(optarg); break;
-			case 'P': par.P = - atoi(optarg); break;
+			case 'W': par.bandwidth = atoi(optarg); break;
+			case 'M': par.M = strtol(optarg, &tok, 10);   if(tok && tok[1]) rpar.M = strtol(tok + 1, &tok, 10); break;
+			case 'X': par.X = - strtol(optarg, &tok, 10); if(tok && tok[1]) rpar.X = - strtol(tok + 1, &tok, 10); break;
+			case 'O': par.O = - strtol(optarg, &tok, 10); if(tok && tok[1]) rpar.O = - strtol(tok + 1, &tok, 10); break;
+			case 'E': par.E = - strtol(optarg, &tok, 10); if(tok && tok[1]) rpar.E = - strtol(tok + 1, &tok, 10); break;
+			case 'Q': par.Q = - strtol(optarg, &tok, 10); if(tok && tok[1]) rpar.Q = - strtol(tok + 1, &tok, 10); break;
+			case 'P': par.P = - strtol(optarg, &tok, 10); if(tok && tok[1]) rpar.P = - strtol(tok + 1, &tok, 10); break;
 			case 'G':
 				str = optarg;
 				while(1){
@@ -135,12 +371,6 @@ int main(int argc, char **argv){
 					else if(strncasecmp("rma_win", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.rma_win = atoi(str + mats[2].rm_so);
 					else if(strncasecmp("qltlo", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.qltlo = atoi(str + mats[2].rm_so);
 					else if(strncasecmp("qlthi", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.qlthi = atoi(str + mats[2].rm_so);
-					else if(strncasecmp("M", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) rpar.M = atoi(str + mats[2].rm_so);
-					else if(strncasecmp("X", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) rpar.X = - atoi(str + mats[2].rm_so);
-					else if(strncasecmp("O", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) rpar.O = - atoi(str + mats[2].rm_so);
-					else if(strncasecmp("E", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) rpar.E = - atoi(str + mats[2].rm_so);
-					else if(strncasecmp("Q", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) rpar.Q = - atoi(str + mats[2].rm_so);
-					else if(strncasecmp("P", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) rpar.P = - atoi(str + mats[2].rm_so);
 					else {
 						fprintf(stderr, "Unknown parameter: %s\n", str);
 						return 1;
@@ -164,139 +394,66 @@ int main(int argc, char **argv){
 					str += mats[0].rm_eo;
 				}
 			case 'R': repm = atoi(optarg); break;
-			default: return usage();
+			default: return usage_poa();
 		}
 	}
 	regfree(&reg);
 	if(optind < argc){
 		fr = open_all_filereader(argc - optind, argv + optind, 0);
 	} else {
-		return usage();
-		//fr = open_filereader(NULL, 0);
+		return usage_poa();
 	}
 	seqs = init_seqbank();
 	seq = init_biosequence();
-	if((mode & SEQALIGN_MODE_POA)){
-		BSPOA *g;
-		bspoa_cns_debug = verbose;
-		g = init_bspoa(par);
-		beg_bspoa(g);
-		while(readseq_filereader(fr, seq)){
-			if(seq->seq->size == 0) continue;
-			push_bspoa(g, seq->seq->string, seq->seq->size);
-		}
+	bspoa_cns_debug = verbose;
+	g  = init_bspoa(par);
+	lg = init_bspoa(rpar);
+	beg_bspoa(g);
+	while(readseq_filereader(fr, seq)){
+		if(seq->seq->size == 0) continue;
+		push_bspoa(g, seq->seq->string, seq->seq->size);
+	}
+	end_bspoa(g);
+	for(repn=1;repn<repm;repn++){ // for benchmarking
+		beg_bspoacore(g, NULL, 0, 0);
 		end_bspoa(g);
-		for(repn=1;repn<repm;repn++){ // for benchmarking
-			beg_bspoacore(g, NULL, 0, 0);
-			end_bspoa(g);
-		}
-		if(par.remsa){
-			BSPOA *lg;
-			int recnt;
-			lg = init_bspoa(rpar);
-			for(recnt=0;recnt<par.remsa;recnt++){
-				if(bspoa_cns_debug){
-					fprintf(stdout, "## TOBE MSA\n");
-					print_msa_sline_bspoa(g, stdout);
-				}
-				remsa_bspoa(g, lg);
+	}
+	if(par.remsa){
+		int recnt;
+		for(recnt=0;recnt<par.remsa;recnt++){
+			if(bspoa_cns_debug){
+				fprintf(stdout, "## TOBE MSA\n");
+				print_msa_sline_bspoa(g, stdout);
 			}
-			free_bspoa(lg);
-		}
-		if(rmaend >= rmabeg){
-			BSPOA *lg;
-			lg = init_bspoa(rpar);
-			local_remsa_bspoa(g, rmabeg, rmaend, NULL, NULL, NULL, NULL, NULL, lg);
-			//print_msa_sline_bspoa(lg, stdout);
-			free_bspoa(lg);
-		}
-		print_msa_mline_bspoa(g, stdout);
-		if(msaend >= msabeg){
-			FILE *out;
-			out = open_file_for_write("1.dot", NULL, 1);
-			print_dot_bspoa(g, msabeg, msaend, msacnt, out);
-			fclose(out);
-		}
-		free_bspoa(g);
-	} else {
-		seqalign_result_t rs;
-		char *alnstr[3]; int strn;
-		u4v *cigars;
-		u1v *qseq, *tseq;
-		b1v *mempool;
-		b1i mtx[16];
-		banded_striped_epi8_seqalign_set_score_matrix(mtx, par.M, par.X);
-		mempool = init_b1v(1024);
-		qseq   = init_u1v(1024);
-		tseq   = init_u1v(1024);
-		cigars = init_u4v(64);
-		alnstr[0] = NULL;
-		alnstr[1] = NULL;
-		alnstr[2] = NULL;
-		strn = 0;
-		while(readseq_filereader(fr, seq)){
-			if(seq->seq->size == 0) continue;
-			push_seqbank(seqs, seq->tag->string, seq->tag->size, seq->seq->string, seq->seq->size);
-			if(seqs->nseq == 2){
-				if(_W <= 0) W = roundup_times(seqs->rdlens->buffer[0], 16);
-				else W = _W;
-				clear_and_encap_u1v(qseq,  seqs->rdlens->buffer[0]);
-				bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[0], seqs->rdlens->buffer[0], qseq->buffer);
-				qseq->size = seqs->rdlens->buffer[0];
-				clear_and_encap_u1v(tseq,  seqs->rdlens->buffer[1]);
-				bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[1], seqs->rdlens->buffer[1], tseq->buffer);
-				tseq->size = seqs->rdlens->buffer[1];
-				for(repn=1;repn<repm;repn++){ // for benchmarking
-					if(mode & SEQALIGN_MODE_EDIT){
-						rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode & 0x7, verbose);
-					} else {
-						rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode & 0x7, W, mtx, par.O, par.E, par.Q, par.P, verbose);
-					}
-				}
-				if(mode & SEQALIGN_MODE_EDIT){
-					rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode & 0x7, verbose);
-				} else {
-					rs = banded_striped_epi8_seqalign_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, mode & 0x7, W, mtx, par.O, par.E, par.Q, par.P, verbose);
-				}
-				if(rs.mat){
-					if(strn < rs.aln){
-						strn = rs.aln;
-						alnstr[0] = realloc(alnstr[0], strn + 1);
-						alnstr[1] = realloc(alnstr[1], strn + 1);
-						alnstr[2] = realloc(alnstr[2], strn + 1);
-					}
-					if(verbose){
-						u4i ci;
-						fprintf(stderr, "CIGAR: %d\t", rs.aln);
-						for(ci=0;ci<cigars->size;ci++){
-							if((cigars->buffer[ci] >> 4) == 1){
-								fprintf(stderr, "%c", "MIDNSHP=X*"[cigars->buffer[ci] & 0xf]);
-							} else {
-								fprintf(stderr, "%d%c", cigars->buffer[ci] >> 4, "MIDNSHP=X*"[cigars->buffer[ci] & 0xf]);
-							}
-						}
-						fprintf(stderr, "\n");
-					}
-					seqalign_cigar2alnstr(qseq->buffer, tseq->buffer, &rs, cigars, alnstr, strn);
-					fprintf(stdout, "%s\t%d\t+\t%d\t%d\t%s\t%d\t+\t%d\t%d\t", seqs->rdtags->buffer[0], Int(qseq->size), rs.qb, rs.qe, seqs->rdtags->buffer[1], Int(tseq->size), rs.tb, rs.te);
-					fprintf(stdout, "%d\t%.3f\t%d\t%d\t%d\t%d\n", rs.score, 1.0 * rs.mat / rs.aln, rs.mat, rs.mis, rs.ins, rs.del);
-					fprintf(stdout, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
-				}
-				clear_seqbank(seqs);
-			}
-		}
-		free_u1v(qseq);
-		free_u1v(tseq);
-		free_b1v(mempool);
-		free_u4v(cigars);
-		if(strn){
-			free(alnstr[0]);
-			free(alnstr[1]);
-			free(alnstr[2]);
+			remsa_bspoa(g, lg);
 		}
 	}
+	if(rmaend >= rmabeg){
+		local_remsa_bspoa(g, rmabeg, rmaend, NULL, NULL, NULL, NULL, NULL, lg);
+		//print_msa_sline_bspoa(lg, stdout);
+	}
+	print_msa_mline_bspoa(g, stdout);
+	if(msaend >= msabeg){
+		FILE *out;
+		out = open_file_for_write("1.dot", NULL, 1);
+		print_dot_bspoa(g, msabeg, msaend, msacnt, out);
+		fclose(out);
+	}
+	free_bspoa(g);
+	free_bspoa(lg);
 	free_biosequence(seq);
 	close_filereader(fr);
 	free_seqbank(seqs);
 	return 0;
+}
+
+int main(int argc, char **argv){
+	if(argc < 2){
+		return usage();
+	}
+	if(strcasecmp("EDIT", argv[1]) == 0) return main_edit(argc - 1, argv + 1);
+	if(strcasecmp("ALIGN", argv[1]) == 0) return main_align(argc - 1, argv + 1);
+	if(strcasecmp("POA", argv[1]) == 0) return main_poa(argc - 1, argv + 1);
+	fprintf(stderr, " -- Unknown command '%s' -- \n", argv[0]);
+	return 1;
 }
