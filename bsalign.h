@@ -2551,20 +2551,28 @@ static inline u4i banded_striped_epi8_seqalign_piecex_backcal(u1i *qseq, u1i *ts
 			cg = _push_cigar_bsalign(cigars, cg, 0, 1);
 			Hs[1] = Hs[0];
 		} else if(bt == SEQALIGN_BT_I){
-			for(sz=1;Int(sz)+roffs[rs->tb]<=rs->qb;sz++){
-				if(piecewise == 2){
-					t = num_max(gapo1 + sz * gape1, gapo2 + sz * gape2);
-				} else {
-					t = gapo1 + sz * gape1;
-				}
-				Hs[0] = banded_striped_epi8_seqalign_getscore(ups + (rs->tb) * ((b8i)bandwidth), (int*)(ubs + (rs->tb) * roundup_times((WORDSIZE + 1) * sizeof(int), WORDSIZE)), W, rs->qb - sz - roffs[rs->tb]);
-				if(Hs[0] + t == Hs[1]){
-					cg = _push_cigar_bsalign(cigars, cg, 1, sz);
-					Hs[1] = Hs[0];
-					rs->qb -= sz;
-					rs->ins += sz;
-					rs->aln += sz;
-					break;
+			if(rs->qb <= 0){
+				cg = _push_cigar_bsalign(cigars, cg, 1, sz);
+				Hs[1] = Hs[0];
+				rs->qb -= sz;
+				rs->ins += sz;
+				rs->aln += sz;
+			} else {
+				for(sz=1;Int(sz)+roffs[rs->tb]<=rs->qb;sz++){
+					if(piecewise == 2){
+						t = num_max(gapo1 + sz * gape1, gapo2 + sz * gape2);
+					} else {
+						t = gapo1 + sz * gape1;
+					}
+					Hs[0] = banded_striped_epi8_seqalign_getscore(ups + (rs->tb) * ((b8i)bandwidth), (int*)(ubs + (rs->tb) * roundup_times((WORDSIZE + 1) * sizeof(int), WORDSIZE)), W, rs->qb - sz - roffs[rs->tb]);
+					if(Hs[0] + t == Hs[1]){
+						cg = _push_cigar_bsalign(cigars, cg, 1, sz);
+						Hs[1] = Hs[0];
+						rs->qb -= sz;
+						rs->ins += sz;
+						rs->aln += sz;
+						break;
+					}
 				}
 			}
 		} else {
