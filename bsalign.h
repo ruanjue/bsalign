@@ -2552,7 +2552,7 @@ static inline u4i banded_striped_epi8_seqalign_piecex_backcal(u1i *qseq, u1i *ts
 			Hs[1] = Hs[0];
 		} else if(bt == SEQALIGN_BT_I){
 			if(rs->qb <= 0){
-				cg = _push_cigar_bsalign(cigars, cg, 1, sz);
+				cg = _push_cigar_bsalign(cigars, cg, 1, 1);
 				Hs[1] = Hs[0];
 				rs->qb --;
 				rs->ins ++;
