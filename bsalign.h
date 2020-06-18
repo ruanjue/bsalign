@@ -2554,9 +2554,9 @@ static inline u4i banded_striped_epi8_seqalign_piecex_backcal(u1i *qseq, u1i *ts
 			if(rs->qb <= 0){
 				cg = _push_cigar_bsalign(cigars, cg, 1, sz);
 				Hs[1] = Hs[0];
-				rs->qb -= sz;
-				rs->ins += sz;
-				rs->aln += sz;
+				rs->qb --;
+				rs->ins ++;
+				rs->aln ++;
 			} else {
 				for(sz=1;Int(sz)+roffs[rs->tb]<=rs->qb;sz++){
 					if(piecewise == 2){
