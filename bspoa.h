@@ -1638,7 +1638,7 @@ static inline int _alignment2graph_bspoa(BSPOA *g, u4i rid, u4i midx, int xe, in
 				t = g->par->O + g->par->E * Hs[2];
 			}
 #if DEBUG
-			if(x < n->rpos){ // should never happen
+			if(x < Int(n->rpos)){ // should never happen
 				fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
 				abort();
 			}
