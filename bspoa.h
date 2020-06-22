@@ -1564,9 +1564,6 @@ static inline int _alignment2graph_bspoa(BSPOA *g, u4i rid, u4i midx, int xe, in
 	Hs[1] = banded_striped_epi8_seqalign_getscore(us, ubegs, W, x - n->rpos);
 	Hs[2] = 0;
 	while(1){
-		if(rid == 40 && x <= 816){
-			fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-		}
 		if(nidx == BSPOA_HEAD_NODE || x < 0){
 			xb = x;
 			while(x >= 0){
