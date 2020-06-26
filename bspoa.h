@@ -100,7 +100,7 @@ typedef struct {
 
 static inline void gen_cns_aln_event_table_bspoa(BSPOAPar *par, float ps[8], u1i *table){
 	u4i i, a, b, c, d;
-	ps[0] = 0;              // M
+	ps[0] = log(1 - par->psub); // M
 	ps[1] = log(par->psub); // X
 	ps[2] = log(par->pins); // I
 	ps[3] = log(par->pdel); // D
@@ -1788,7 +1788,7 @@ static inline int align_rd_bspoacore(BSPOA *g, u2i rid){
 	g->nodes->buffer[BSPOA_HEAD_NODE].mpos = 0;
 	for(nidx=1;nidx<g->nodes->size;nidx++){
 		u = ref_bspoanodev(g->nodes, nidx);
-		u->mpos = MAX_U2;
+		u->mpos = MAX_U4;
 	}
 	while(pop_u4v(g->stack, &nidx)){
 		u = ref_bspoanodev(g->nodes, nidx);
@@ -2235,15 +2235,29 @@ static inline void simple_cns_bspoa(BSPOA *g){
 	ref_bspoanodev(g->nodes, BSPOA_TAIL_NODE)->cpos = g->cns->size;
 }
 
-static inline long double sum_log_nums(int cnt, float *vals){
+#define MAX_LOG_CACHE	1000
+static u4i _log_caches_n = 1;
+static long double _log_caches[MAX_LOG_CACHE + 1];
+
+static inline long double cal_permutation_bspoa(u4i n, u4i m){
+	if(n > MAX_LOG_CACHE) return 1;
+	_log_caches[0] = 0;
+	while(_log_caches_n <= n){
+		_log_caches[_log_caches_n] = _log_caches[_log_caches_n - 1] + logl(_log_caches_n);
+		_log_caches_n ++;
+	}
+	return _log_caches[n] - _log_caches[m] - _log_caches[n - m];
+}
+
+static inline long double sum_log_nums(int cnt, long double *vals){
 	long double delta, sum;
 	int i;
 	if(cnt <= 0) return 0;
-	sort_array(vals, cnt, float, num_cmpgt(b, a));
+	sort_array(vals, cnt, long double, num_cmpgt(b, a));
 	sum = vals[0];
 	for(i=1;i<cnt;i++){
 		delta = vals[i] - sum;
-		if(delta <= -40) continue; // overflow
+		if(delta <= -40) break; // overflow
 		delta = expl(delta);
 		delta = logl(1 + delta);
 		sum += delta;
@@ -2251,17 +2265,17 @@ static inline long double sum_log_nums(int cnt, float *vals){
 	return sum;
 }
 
-static inline float cns_bspoa(BSPOA *g){
-	typedef struct {float sc[6]; u1i bt, lb;} dp_t;
+static inline long double cns_bspoa(BSPOA *g){
+	typedef struct {long double sc[6]; u1i bt, lb;} dp_t;
 	bspoanode_t *v;
 	dp_t *dps[5], *dp[5], *lp;
-	float ret, errs[5], errd, erre, scrs[2], log10;
+	long double ret, errs[5], errd, erre, scrs[2], trs[3], log10;
 	u1i a, b, c, d, e, f, *r, *qs, *ts, *bs[10];
-	u4i nseq, mrow, mlen, cpos, rid, i, mpsize;
+	u4i nseq, mrow, mlen, cpos, rid, cnt[3], i, mpsize;
 	int pos;
 	nseq = g->nrds;
 	mrow = nseq + 3;
-	log10 = log(10);
+	log10 = logl(10);
 	mlen = g->msaidxs->size;
 	mpsize = (mlen + 1) * 5 * sizeof(dp_t);
 	mpsize += nseq * 10; // bs[0/1/2/3/4] is the state of the last read non-N base vs cns[A/C/G/T/-], M/I/D = 0/1/2; 5-9 is a backup
@@ -2270,7 +2284,7 @@ static inline float cns_bspoa(BSPOA *g){
 	for(i=0;i<5;i++){
 		dps[i] = (dp_t*)r;
 		r += (mlen + 1) * sizeof(dp_t);
-		memset(dps[i][mlen].sc, 0, 6 * sizeof(float));
+		memset(dps[i][mlen].sc, 0, 6 * sizeof(long double));
 		dps[i][mlen].bt = 4;
 		dps[i][mlen].lb = 4;
 	}
@@ -2282,7 +2296,7 @@ static inline float cns_bspoa(BSPOA *g){
 		qs = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
 		for(a=0;a<=4;a++){
 			dp[a] = dps[a] + pos;
-			memset(dp[a]->sc, 0, 6 * sizeof(float));
+			memset(dp[a]->sc, 0, 6 * sizeof(long double));
 		}
 		for(e=0;e<=4;e++){
 			lp = dps[e] + pos + 1;
@@ -2298,25 +2312,12 @@ static inline float cns_bspoa(BSPOA *g){
 			}
 		}
 		for(a=0;a<=4;a++){
-#if 1
 			errs[0] = dp[a]->sc[0] + dps[0][pos+1].sc[5];
 			errs[1] = dp[a]->sc[1] + dps[1][pos+1].sc[5];
 			errs[2] = dp[a]->sc[2] + dps[2][pos+1].sc[5];
 			errs[3] = dp[a]->sc[3] + dps[3][pos+1].sc[5];
 			errs[4] = dp[a]->sc[4] + dps[4][pos+1].sc[5];
 			dp[a]->sc[5] = sum_log_nums(5, errs);
-#else
-			errd = - 1e38F;
-			for(e=0;e<=4;e++){
-				lp = dps[e] + pos + 1;
-				errd = num_max(errd, dp[a]->sc[e] + lp->sc[5]);
-			}
-			erre = 0;
-			for(e=0;e<=4;e++){
-				erre += exp(dp[a]->sc[e] + dps[e][pos+1].sc[5] - errd);
-			}
-			dp[a]->sc[5] = log(erre) + errd;
-#endif
 			dp[a]->bt = 0;
 			for(e=1;e<=4;e++){
 				if(dp[a]->sc[e] + dps[e][pos+1].sc[5] > dp[a]->sc[dp[a]->bt] + dps[dp[a]->bt][pos+1].sc[5]) dp[a]->bt = e;
@@ -2364,16 +2365,50 @@ static inline float cns_bspoa(BSPOA *g){
 		errs[2] = dps[2][pos].sc[5];
 		errs[3] = dps[3][pos].sc[5];
 		errs[4] = dps[4][pos].sc[5];
-		//fprintf(stderr, "[%u:%c] %0.4f\t%0.4f\t%0.4f\t%0.4f\t%0.4f\t", pos, "ACGT-"[c], errs[0], errs[1], errs[2], errs[3], errs[4]);
 		scrs[0] = sum_log_nums(5, errs);
 		errd = dps[c][pos].sc[5];
 		erre = - (10 * log(1 - exp(errd - scrs[0])) / log10);
-		//fprintf(stderr, "=%0.4f\t%f\t%0.6f\n", scrs[0], errd - scrs[0], erre);
+		//fprintf(stderr, "[%d%c] %Lf\t%Lf\t%Lf\n", pos, "ACGT-"[c], errd, scrs[0], erre);
 		qs[nseq + 1] = (int)num_min(erre, 40.0);
-		errd = errs[c];
-		qs[nseq + 2] = 0; // I cannot get a good method to calculate the alternative base quality
+		if(0){
+			a = (c + 1) % 5;
+			for(e=0;e<=4;e++){
+				if(e == c) continue;
+				if(dps[e][pos].sc[5] > dps[a][pos].sc[5]) a = e;
+			}
+			// assumes number of alt base equals cns base
+			cnt[0] = cnt[1] = 0;
+			for(rid=0;rid<nseq;rid++){
+				if(qs[rid] == a) cnt[0] ++;
+				else if(qs[rid] == c) cnt[1] ++;
+			}
+			e = (pos + 1 < Int(mlen))? g->msacols->buffer[g->msaidxs->buffer[pos + 1] * mrow + nseq] : 4;
+			trs[0] = (1 - expl(g->dpvals[g->dptable[a + c * 5 + e * 25 + e * 125] >> 3]));
+			trs[1] = (1 - expl(g->dpvals[g->dptable[c + a * 5 + e * 25 + e * 125] >> 3]));
+			trs[0] = trs[0] / (trs[0] + trs[1]);
+			trs[1] = 1 - trs[0];
+			trs[2] = trs[0] / trs[1];
+			erre = logl(trs[0]) * cnt[0] + logl(trs[1]) * cnt[1];
+			errd = erre + cal_permutation_bspoa(cnt[0] + cnt[1], cnt[0]);
+			fprintf(stderr, "[%d%c%c] %d\t%d\t%Lf\t%Lf\t%Lf\t%Lf\n", pos, "ACGT- "[c], "ACGT- "[a], cnt[1], cnt[0], trs[0], erre, cal_permutation_bspoa(cnt[0] + cnt[1], cnt[0]), errd);
+			erre = errd;
+			trs[2] = logl(trs[2]);
+			cnt[2] = cnt[0];
+			while(cnt[2] > 1){
+				cnt[2] --;
+				erre += logl(((long double)cnt[2]) / (cnt[0] + cnt[1] - cnt[2] + 1)) + trs[2];
+				if(erre - errd <= -40) break;
+				errd += logl(1 + expl(erre - errd));
+			}
+			//erre = - (10 * logl(1 - expl(errd)) / log10);
+			erre = - (10 * errd) / log10;
+			fprintf(stderr, "\t=%Lf\t%Lf\n", errd, erre);
+			qs[nseq + 2] = num_min(erre, 40.0);
+		} else {
+			qs[nseq + 2] = 0;
+		}
 		scrs[1] = scrs[0];
-		if(c < 4){
+		if(qs[nseq + 0] < 4){
 			push_u1v(g->cns, qs[nseq + 0]);
 			push_u1v(g->qlt, qs[nseq + 1]);
 			push_u1v(g->alt, qs[nseq + 2]);
@@ -2381,16 +2416,16 @@ static inline float cns_bspoa(BSPOA *g){
 	}
 	if(bspoa_cns_debug > 2){
 		for(pos=0;pos<Int(mlen);pos++){
-			float minp = dps[0][pos].sc[5];
+			long double minp = dps[0][pos].sc[5];
 			for(a=1;a<=4;a++){
 				if(dps[a][pos].sc[5] < minp) minp = dps[a][pos].sc[5];
 			}
-			fprintf(stderr, "[%d]\t%c\t%0.2f", pos, "ACGT- "[g->msacols->buffer[g->msaidxs->buffer[pos] * mrow + nseq]], minp);
+			fprintf(stderr, "[%d]\t%c\t%0.2Lf", pos, "ACGT- "[g->msacols->buffer[g->msaidxs->buffer[pos] * mrow + nseq]], minp);
 			for(a=0;a<=4;a++){
-				fprintf(stderr, "\t%c:%0.2f[", "ACGT-"[a], dps[a][pos].sc[5] - minp);
+				fprintf(stderr, "\t%c:%0.2Lf[", "ACGT-"[a], dps[a][pos].sc[5] - minp);
 				for(e=0;e<=4;e++){
 					if(e == dps[a][pos].bt) fprintf(stderr, "*");
-					fprintf(stderr, "%c:%0.2f", "acgt-"[e], dps[a][pos].sc[e] + dps[e][pos+1].sc[5] - minp);
+					fprintf(stderr, "%c:%0.2Lf", "acgt-"[e], dps[a][pos].sc[e] + dps[e][pos+1].sc[5] - minp);
 					if(e < 4) fprintf(stderr, ",");
 				}
 				fprintf(stderr, "]");
@@ -2568,7 +2603,7 @@ static inline void check_graph_cov_bspoa(BSPOA *g){
 }
 
 // return updated msaend on whole MSA
-static inline u2i local_remsa_bspoa(BSPOA *g, u4i msabeg, u4i msaend, u4i *_rbs, u4i *_res, u4i *_ridxs, float *_scores, u1i *_ld, BSPOA *lg){
+static inline u4i local_remsa_bspoa(BSPOA *g, u4i msabeg, u4i msaend, u4i *_rbs, u4i *_res, u4i *_ridxs, float *_scores, u1i *_ld, BSPOA *lg){
 	float *scores;
 	u4i nseq, mrow, mlen, i, rid, pos;
 	u4i *rbs, *res, *ridxs;
