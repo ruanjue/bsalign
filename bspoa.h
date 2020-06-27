@@ -1779,7 +1779,7 @@ static inline int align_rd_bspoacore(BSPOA *g, u2i rid){
 	bspoaedge_t *e, *f;
 	u4i seqlen, nidx, eidx, mmidx;
 	b1i *us, *es, *qs;
-	int *ubegs, smax, rmax;
+	int *ubegs, smax, rmax, maxoff;
 	seqlen = g->seqs->rdlens->buffer[rid];
 	if(seqlen == 0) return 0;
 	prepare_rd_align_bspoa(g, rid);
@@ -1806,18 +1806,19 @@ static inline int align_rd_bspoacore(BSPOA *g, u2i rid){
 			if(e->node == BSPOA_TAIL_NODE){
 				dpalign_row_prepare_data(g, u->mmidx, &us, &es, &qs, &ubegs);
 				if(g->par->alnmode == SEQALIGN_MODE_GLOBAL){
-					smax = banded_striped_epi8_seqalign_getscore(us, ubegs, g->bandwidth / WORDSIZE, g->qlen - 1 - v->rpos);
+					maxoff = num_min(g->qlen, u->rpos + g->bandwidth) - 1;
+					smax = banded_striped_epi8_seqalign_getscore(us, ubegs, g->bandwidth / WORDSIZE, maxoff - u->rpos);
 					if(smax > g->maxscr){
 						g->maxscr = smax;
 						g->maxidx = offset_bspoanodev(g->nodes, u);
-						g->maxoff = g->qlen - 1;
+						g->maxoff = maxoff;
 					}
 				} else {
 					rmax = banded_striped_epi8_seqalign_row_max(us, ubegs, g->bandwidth / WORDSIZE, &smax);
 					if(smax > g->maxscr){
 						g->maxscr = smax;
 						g->maxidx = offset_bspoanodev(g->nodes, u);
-						g->maxoff = rmax + v->rpos;
+						g->maxoff = rmax + u->rpos;
 					}
 				}
 				v->vst ++;
