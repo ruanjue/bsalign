@@ -61,6 +61,7 @@ int usage_edit(){
 int usage_poa(){
 	fprintf(stdout,
 	"Usage: bsalign poa [option] <input fasta/q.gz file>\n"
+	" -o <string> Consensus fasta file, [NULL]\n"
 	" -m <string> Align mode: global/extend/overlap, [global]\n"
 	" -W <int>    Bandwidth, 0: full length, [128]\n"
 	" -M <string> Score for match for poa and local realignment [2,1]\n"
@@ -303,13 +304,14 @@ int main_edit(int argc, char **argv){
 
 int main_poa(int argc, char **argv){
 	FileReader *fr;
+	FILE *out;
 	SeqBank *seqs;
 	BioSequence *seq;
 	BSPOAPar par, rpar;
 	BSPOA *g, *lg;
 	regex_t reg;
 	regmatch_t mats[3];
-	char *str, *tok;
+	char *str, *tok, *cnsfn;
 	int c, repm, repn, verbose;
 	int msabeg, msaend, msacnt, rmabeg, rmaend;
 	par  = DEFAULT_BSPOA_PAR;
@@ -323,6 +325,7 @@ int main_poa(int argc, char **argv){
 	msacnt = 3;
 	rmabeg = 0;
 	rmaend = -1;
+	cnsfn = NULL;
 	c = regcomp(&reg, "([a-zA-Z_]+?)=([.0-9]+?)", REG_EXTENDED);
 	if(c){
 		char regtag[14];
@@ -330,10 +333,11 @@ int main_poa(int argc, char **argv){
 		fprintf(stderr, " -- REGCOMP: %s --\n", regtag); fflush(stderr);
 		exit(1);
 	}
-	while((c = getopt(argc, argv, "hvm:W:M:X:O:E:Q:P:G:T:R:")) != -1){
+	while((c = getopt(argc, argv, "hvo:m:W:M:X:O:E:Q:P:G:T:R:")) != -1){
 		switch(c){
 			case 'h': return usage_poa();
 			case 'v': verbose ++; break;
+			case 'o': cnsfn = optarg; break;
 			case 'm':
 			str = optarg;
 			while(str && *str){
@@ -404,6 +408,11 @@ int main_poa(int argc, char **argv){
 	} else {
 		return usage_poa();
 	}
+	if(cnsfn){
+		out = open_file_for_write(cnsfn, NULL, 1);
+	} else {
+		out = NULL;
+	}
 	seqs = init_seqbank();
 	seq = init_biosequence();
 	bspoa_cns_debug = verbose;
@@ -431,9 +440,13 @@ int main_poa(int argc, char **argv){
 	}
 	if(rmaend >= rmabeg){
 		local_remsa_bspoa(g, rmabeg, rmaend, NULL, NULL, NULL, NULL, NULL, lg);
-		//print_msa_sline_bspoa(lg, stdout);
+		print_msa_sline_bspoa(lg, stderr);
 	}
 	print_msa_mline_bspoa(g, stdout);
+	if(out){
+		fprintf(out, ">cns_seq\n%s\n", g->strs->string);
+		close_file(out);
+	}
 	if(msaend >= msabeg){
 		FILE *out;
 		out = open_file_for_write("1.dot", NULL, 1);
