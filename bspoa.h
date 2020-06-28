@@ -91,23 +91,24 @@ typedef struct {
 	u4i backbone;
 	u1v *msacols;
 	u4v *msaidxs, *msacycs;
-	float dpvals[8];
+	float dpvals[8], dporis[8];
 	u1i *dptable;
 	u1v *cns, *qlt, *alt;
 	String *strs;
 	u8i ncall, obj_uid;
 } BSPOA;
 
-static inline void gen_cns_aln_event_table_bspoa(BSPOAPar *par, float ps[8], u1i *table){
+static inline void gen_cns_aln_event_table_bspoa(BSPOAPar *par, float ps[8], float os[8], u1i *table){
 	u4i i, a, b, c, d;
-	ps[0] = log(1 - par->psub); // M
-	ps[1] = log(par->psub); // X
-	ps[2] = log(par->pins); // I
-	ps[3] = log(par->pdel); // D
-	ps[4] = log(par->piex); // IE
-	ps[5] = log(par->pdex); // DE
-	ps[6] = log(par->hins); // HI
-	ps[7] = log(par->hdel); // HD
+	os[0] = 1 - par->psub; // M
+	os[1] = par->psub; // X
+	os[2] = par->pins; // I
+	os[3] = par->pdel; // D
+	os[4] = par->piex; // IE
+	os[5] = par->pdex; // DE
+	os[6] = par->hins; // HI
+	os[7] = par->hdel; // HD
+	for(i=0;i<8;i++) ps[i] = log(os[i]);
 	for(i=0;i<5*5*5*5;i++){
 		a = (i % 5); // cur cns base
 		b = (i % (5 * 5)) / 5; // cur read base
@@ -189,7 +190,7 @@ static inline BSPOA* init_bspoa(BSPOAPar par){
 	g->msaidxs = init_u4v(1024);
 	g->msacycs = init_u4v(8);
 	g->dptable = malloc(5 * 5 * 5 * 5);
-	gen_cns_aln_event_table_bspoa(g->par, g->dpvals, g->dptable);
+	gen_cns_aln_event_table_bspoa(g->par, g->dpvals, g->dporis, g->dptable);
 	g->strs = init_string(1024);
 	g->cns = init_u1v(1024);
 	g->qlt = init_u1v(1024);
@@ -538,11 +539,13 @@ static inline void print_msa_sline_bspoa(BSPOA *g, FILE *out){
 	}
 	str[i] = 0;
 	fprintf(out, "CNS\t%d\t%s\n", Int(g->cns->size), str);
+	str += g->cns->size + 1;
 	for(i=0;i<g->qlt->size;i++){
 		str[i] = '!' +  g->qlt->buffer[i]; // Phred + 33
 	}
 	str[i] = 0;
 	fprintf(out, "QLT\t%d\t%s\n", Int(g->qlt->size), str);
+	str += g->cns->size + 1;
 	for(i=0;i<g->alt->size;i++){
 		str[i] = '!' +  g->alt->buffer[i]; // Phred + 33
 	}
@@ -2250,6 +2253,10 @@ static inline long double cal_permutation_bspoa(u4i n, u4i m){
 	return _log_caches[n] - _log_caches[m] - _log_caches[n - m];
 }
 
+static inline long double cal_binomial_bspoa(u4i n, u4i m, long double p){
+	return logl(p) * m + logl(1 - p) * (n - m) + cal_permutation_bspoa(n, m);
+}
+
 static inline long double sum_log_nums(int cnt, long double *vals){
 	long double delta, sum;
 	int i;
@@ -2270,7 +2277,7 @@ static inline long double cns_bspoa(BSPOA *g){
 	typedef struct {long double sc[6]; u1i bt, lb;} dp_t;
 	bspoanode_t *v;
 	dp_t *dps[5], *dp[5], *lp;
-	long double ret, errs[5], errd, erre, scrs[2], trs[3], log10;
+	long double ret, errs[5], errd, erre, p, log10;
 	u1i a, b, c, d, e, f, *r, *qs, *ts, *bs[10];
 	u4i nseq, mrow, mlen, cpos, rid, cnt[3], i, mpsize;
 	int pos;
@@ -2357,7 +2364,6 @@ static inline long double cns_bspoa(BSPOA *g){
 	for(i=0;i<10;i++){
 		memset(bs[i], 0, nseq);
 	}
-	scrs[0] = scrs[1] = 0;
 	for(pos=mlen-1;pos>=0;pos--){
 		qs = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
 		c = qs[nseq];
@@ -2366,12 +2372,11 @@ static inline long double cns_bspoa(BSPOA *g){
 		errs[2] = dps[2][pos].sc[5];
 		errs[3] = dps[3][pos].sc[5];
 		errs[4] = dps[4][pos].sc[5];
-		scrs[0] = sum_log_nums(5, errs);
+		erre = sum_log_nums(5, errs);
 		errd = dps[c][pos].sc[5];
-		erre = - (10 * log(1 - exp(errd - scrs[0])) / log10);
-		//fprintf(stderr, "[%d%c] %Lf\t%Lf\t%Lf\n", pos, "ACGT-"[c], errd, scrs[0], erre);
+		erre = - (10 * log(1 - exp(errd - erre)) / log10);
 		qs[nseq + 1] = (int)num_min(erre, 40.0);
-		if(0){
+		if(1){
 			a = (c + 1) % 5;
 			for(e=0;e<=4;e++){
 				if(e == c) continue;
@@ -2383,32 +2388,28 @@ static inline long double cns_bspoa(BSPOA *g){
 				if(qs[rid] == a) cnt[0] ++;
 				else if(qs[rid] == c) cnt[1] ++;
 			}
-			e = (pos + 1 < Int(mlen))? g->msacols->buffer[g->msaidxs->buffer[pos + 1] * mrow + nseq] : 4;
-			trs[0] = (1 - expl(g->dpvals[g->dptable[a + c * 5 + e * 25 + e * 125] >> 3]));
-			trs[1] = (1 - expl(g->dpvals[g->dptable[c + a * 5 + e * 25 + e * 125] >> 3]));
-			trs[0] = trs[0] / (trs[0] + trs[1]);
-			trs[1] = 1 - trs[0];
-			trs[2] = trs[0] / trs[1];
-			erre = logl(trs[0]) * cnt[0] + logl(trs[1]) * cnt[1];
-			errd = erre + cal_permutation_bspoa(cnt[0] + cnt[1], cnt[0]);
-			fprintf(stderr, "[%d%c%c] %d\t%d\t%Lf\t%Lf\t%Lf\t%Lf\n", pos, "ACGT- "[c], "ACGT- "[a], cnt[1], cnt[0], trs[0], erre, cal_permutation_bspoa(cnt[0] + cnt[1], cnt[0]), errd);
-			erre = errd;
-			trs[2] = logl(trs[2]);
-			cnt[2] = cnt[0];
-			while(cnt[2] > 1){
-				cnt[2] --;
-				erre += logl(((long double)cnt[2]) / (cnt[0] + cnt[1] - cnt[2] + 1)) + trs[2];
-				if(erre - errd <= -40) break;
-				errd += logl(1 + expl(erre - errd));
+			e = 4;
+			for(i=pos+1;i<mlen;i++){
+				e = g->msacols->buffer[g->msaidxs->buffer[i] * mrow + nseq];
+				if(e < 4) break;
 			}
-			//erre = - (10 * logl(1 - expl(errd)) / log10);
-			erre = - (10 * errd) / log10;
-			fprintf(stderr, "\t=%Lf\t%Lf\n", errd, erre);
-			qs[nseq + 2] = num_min(erre, 40.0);
+			p = g->dporis[g->dptable[a + c * 5 + e * 25 + e * 125] >> 3];
+			erre = 0;
+			for(cnt[2]=0;cnt[2]<cnt[0];cnt[2]++){
+				erre += expl(cal_binomial_bspoa(cnt[0] + cnt[1], cnt[2], p));
+			}
+			if(erre == 0){
+				errd = 0;
+			} else {
+				errd = - (10 * logl(1 - erre) / log10);
+			}
+			if(bspoa_cns_debug > 2){
+				fprintf(stderr, "[%d%c%c:%c] %d\t%d\t%Lf\t%Lf\t%Lf\n", pos, "ACGT- "[c], "ACGT- "[a], "ACGT-"[e], cnt[1], cnt[0], p, erre, errd);
+			}
+			qs[nseq + 2] = num_min(errd, 40.0);
 		} else {
 			qs[nseq + 2] = 0;
 		}
-		scrs[1] = scrs[0];
 		if(qs[nseq + 0] < 4){
 			push_u1v(g->cns, qs[nseq + 0]);
 			push_u1v(g->qlt, qs[nseq + 1]);
@@ -2616,6 +2617,7 @@ static inline u4i local_remsa_bspoa(BSPOA *g, u4i msabeg, u4i msaend, u4i *_rbs,
 	if(_rbs) rbs = _rbs;
 	else {
 		rbs = (u4i*)alloca(nseq * sizeof(u4i));
+		memset(rbs, 0, nseq * sizeof(u4i));
 		for(pos=0;pos<msabeg;pos++){
 			qs = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
 			for(rid=0;rid<nseq;rid++){
