@@ -2208,7 +2208,7 @@ static inline void fix_tenon_mortise_msa_bspoa(BSPOA *g){
 	for(rid=0;rid<nseq;rid++){
 		rps[rid] = g->seqs->rdlens->buffer[rid];
 	}
-	cut = num_max(2, 2 * nseq / 5);
+	cut = num_max(2, nseq / 3);
 	cols[0] = cols[1] = NULL;
 	for(pos=mlen-1;pos!=MAX_U4;pos--){
 		cols[1] = cols[0];
