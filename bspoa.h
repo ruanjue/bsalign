@@ -119,7 +119,11 @@ static inline void gen_cns_aln_event_table_bspoa(BSPOAPar *par, float ps[8], flo
 				if(a == b){
 					table[i] = (0 << 3) | 0; // ps[M] << 3 | M
 				} else {
-					table[i] = (1 << 3) | 0; // ps[X] << 3 | M
+					if(b == c && ps[6] > ps[1]){
+						table[i] = (6 << 3) | 0; // ps[HI] << 3 | M
+					} else {
+						table[i] = (1 << 3) | 0; // ps[X] << 3 | M
+					}
 				}
 			} else {
 				if(d == 2){
@@ -1831,9 +1835,6 @@ static inline int align_rd_bspoacore(BSPOA *g, u2i rid){
 					fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
 					abort();
 				}
-				//if(rid == 1826 && u->mmidx == 2 && mmidx == 2246){
-					//fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-				//}
 				dpalign_row_update_bspoa(g, g->qprof[v->ref]->buffer, u->mmidx, mmidx, v->mpos, u->rpos, v->rpos, v->base);
 				if(v->vst){
 					dpalign_row_merge_bspoa(g, mmidx, v->mmidx);
@@ -2193,6 +2194,60 @@ static inline u4i msa_bspoa(BSPOA *g){
 	return g->msaidxs->size;
 }
 
+static inline void fix_tenon_mortise_msa_bspoa(BSPOA *g){
+	bspoanode_t *v;
+	u4i rid, nseq, mrow, mlen, i, pos, *rps;
+	u2i pairs[2][4], cut;
+	u1i *cols[2], pmaxs[2];
+	nseq = g->nrds;
+	mrow = nseq + 3;
+	mlen = g->msaidxs->size;
+	if(mlen == 0) return;
+	clear_and_encap_b1v(g->memp, nseq * sizeof(u4i));
+	rps = (u4i*)g->memp->buffer;
+	for(rid=0;rid<nseq;rid++){
+		rps[rid] = g->seqs->rdlens->buffer[rid];
+	}
+	cut = num_max(2, 2 * nseq / 5);
+	cols[0] = cols[1] = NULL;
+	for(pos=mlen-1;pos!=MAX_U4;pos--){
+		cols[1] = cols[0];
+		cols[0] = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
+		for(rid=0;rid<nseq;rid++){
+			if(cols[0][rid] < 4){
+				rps[rid] --;
+			}
+		}
+		if(cols[1] == NULL) continue;
+		memset(pairs[0], 0, 4 * sizeof(u2i));
+		memset(pairs[1], 0, 4 * sizeof(u2i));
+		for(rid=0;rid<nseq;rid++){
+			if(cols[0][rid] == cols[1][rid]) continue;
+			if(cols[1][rid] == 4) pairs[0][cols[0][rid]] ++;
+			else if(cols[0][rid] == 4) pairs[1][cols[1][rid]] ++;
+		}
+		pmaxs[0] = pmaxs[1] = 0;
+		for(i=1;i<4;i++){
+			if(pairs[0][i] > pairs[0][pmaxs[0]]) pmaxs[0] = i;
+			if(pairs[1][i] > pairs[1][pmaxs[1]]) pmaxs[1] = i;
+		}
+		if(pairs[0][pmaxs[0]] < cut || pairs[1][pmaxs[1]] < cut) continue;
+		if(pmaxs[0] == pmaxs[1]) continue; // TODO: hp_adjust
+		if(bspoa_cns_debug > 2){
+			fflush(stdout);
+			fprintf(stderr, "[tenon_mortise:%d/%d] %c\t%c\t%d\t%d\n", pos, mlen, "ACGT-"[pmaxs[0]], "ACGT-"[pmaxs[1]], pairs[0][pmaxs[0]], pairs[1][pmaxs[1]]);
+		}
+		for(rid=0;rid<nseq;rid++){
+			if(cols[0][rid] == pmaxs[0] && cols[1][rid] == 4){
+				cols[1][rid] = pmaxs[0];
+				cols[0][rid] = 4;
+				v = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid] + rps[rid]);
+				v->mpos ++;
+			}
+		}
+	}
+}
+
 // quick and dirty, major bases
 static inline void simple_cns_bspoa(BSPOA *g){
 	bspoanode_t *v;
@@ -2393,7 +2448,12 @@ static inline long double cns_bspoa(BSPOA *g){
 				e = g->msacols->buffer[g->msaidxs->buffer[i] * mrow + nseq];
 				if(e < 4) break;
 			}
-			p = g->dporis[g->dptable[a + c * 5 + e * 25 + e * 125] >> 3];
+			d = 4;
+			for(i=pos;i>0;i--){
+				d = g->msacols->buffer[g->msaidxs->buffer[i - 1] * mrow + nseq];
+				if(d < 4) break;
+			}
+			p = num_max(g->dporis[g->dptable[c + a * 5 + e * 25 + e * 125] >> 3], g->dporis[g->dptable[c + a * 5 + d * 25 + d * 125] >> 3]);
 			erre = 0;
 			for(cnt[2]=0;cnt[2]<cnt[0];cnt[2]++){
 				erre += expl(cal_binomial_bspoa(cnt[0] + cnt[1], cnt[2], p));
@@ -2404,7 +2464,20 @@ static inline long double cns_bspoa(BSPOA *g){
 				errd = - (10 * logl(1 - erre) / log10);
 			}
 			if(bspoa_cns_debug > 2){
-				fprintf(stderr, "[%d%c%c:%c] %d\t%d\t%Lf\t%Lf\t%Lf\n", pos, "ACGT- "[c], "ACGT- "[a], "ACGT-"[e], cnt[1], cnt[0], p, erre, errd);
+				char flanks[2][3];
+				for(f=2,i=pos;i>0&&f>0;i--){
+					d = g->msacols->buffer[g->msaidxs->buffer[i - 1] * mrow + nseq];
+					if(d < 4){
+						flanks[0][f - 1] = "ACGT-"[d];
+						f --;
+					}
+				}
+				for(f=0,i=pos+1;i<mlen&&f<2;i++){
+					d = g->msacols->buffer[g->msaidxs->buffer[i] * mrow + nseq];
+					if(d < 4) flanks[1][f++] = "ACGT-"[d];
+				}
+				flanks[0][2] = flanks[1][2] = 0;
+				fprintf(stderr, "[ALTQ] %d/%d\t%s\t%c\t%c\t%s\t%d\t%d\t%Lf\t%Lf\t%Lf\n", pos, mlen, flanks[0], "ACGT- "[c], "ACGT-"[a], flanks[1], cnt[1], cnt[0], p, erre, errd);
 			}
 			qs[nseq + 2] = num_min(errd, 40.0);
 		} else {
@@ -2422,7 +2495,7 @@ static inline long double cns_bspoa(BSPOA *g){
 			for(a=1;a<=4;a++){
 				if(dps[a][pos].sc[5] < minp) minp = dps[a][pos].sc[5];
 			}
-			fprintf(stderr, "[%d]\t%c\t%0.2Lf", pos, "ACGT- "[g->msacols->buffer[g->msaidxs->buffer[pos] * mrow + nseq]], minp);
+			fprintf(stderr, "[CNSQ] %d\t%c\t%0.2Lf", pos, "ACGT- "[g->msacols->buffer[g->msaidxs->buffer[pos] * mrow + nseq]], minp);
 			for(a=0;a<=4;a++){
 				fprintf(stderr, "\t%c:%0.2Lf[", "ACGT-"[a], dps[a][pos].sc[5] - minp);
 				for(e=0;e<=4;e++){
@@ -2460,6 +2533,7 @@ static inline void hp_adjust_bspoa(BSPOA *g){
 	nseq = g->nrds;
 	mrow = nseq + 3;
 	mlen = g->msaidxs->size;
+	if(mlen == 0) return;
 	clear_and_encap_b1v(g->memp, nseq * sizeof(u4i));
 	rps = (u4i*)g->memp->buffer;
 	for(rid=0;rid<nseq;rid++){
@@ -2533,6 +2607,7 @@ static inline void end_bspoa(BSPOA *g){
 	msa_bspoa(g);
 	cns_bspoa(g);
 	hp_adjust_bspoa(g);
+	fix_tenon_mortise_msa_bspoa(g);
 	cns_bspoa(g);
 }
 
@@ -2943,6 +3018,8 @@ static inline void remsa_bspoa(BSPOA *g, BSPOA *lg){
 		}
 	}
 	msa_bspoa(g);
+	hp_adjust_bspoa(g);
+	fix_tenon_mortise_msa_bspoa(g);
 	cns_bspoa(g);
 }
 
