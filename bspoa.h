@@ -71,6 +71,7 @@ typedef struct {
 } bspoacns_t;
 
 typedef struct {
+	String   *mtag;
 	SeqBank  *seqs;
 	u4v      *ndoffs;
 	u4v      *cigars, *cgbs, *cges; // refmode, concatenate all cigars together
@@ -165,6 +166,7 @@ static inline void gen_cns_aln_event_table_bspoa(BSPOAPar *par, float ps[8], flo
 static inline BSPOA* init_bspoa(BSPOAPar par){
 	BSPOA *g;
 	g = malloc(sizeof(BSPOA));
+	g->mtag = init_string(8);
 	g->seqs = init_seqbank();
 	g->ndoffs = init_u4v(1024);
 	g->cigars = init_u4v(1024);
@@ -232,6 +234,7 @@ static inline void renew_bspoa(BSPOA *g){
 }
 
 static inline void free_bspoa(BSPOA *g){
+	free_string(g->mtag);
 	free_seqbank(g->seqs);
 	free_u4v(g->ndoffs);
 	free_u4v(g->cigars);
@@ -606,6 +609,49 @@ static inline void print_msa_mline_bspoa(BSPOA *g, FILE *out){
 	}
 	str[i] = 0;
 	fprintf(out, "ALT\t%d\t%s\n", Int(g->alt->size), str);
+}
+
+static inline void print_snp_bspoa(BSPOA *g, FILE *out){
+	u4i i, cnts[6], mpos, cpos, nseq, mrow, mlen, fsz, fct;
+	u1i *col, a, b;
+	char flanks[2][6];
+	fsz = 5;
+	nseq = g->nrds;
+	mrow = nseq + 3;
+	mlen = g->msaidxs->size;
+	for(mpos=cpos=0;mpos<mlen;mpos++){
+		col = g->msacols->buffer + g->msaidxs->buffer[mpos] * mrow;
+		if(col[nseq] >= 4) continue;
+		while(g->alt->buffer[cpos] >= g->par->qlthi){
+			memset(cnts, 0, 6 * sizeof(u4i));
+			for(i=0;i<nseq;i++){
+				cnts[col[i]] ++;
+			}
+			a = g->cns->buffer[cpos];
+			b = (a + 1) % 5;
+			for(i=0;i<=4;i++){
+				if(i == a) continue;
+				if(cnts[i] > cnts[b]) b = i;
+			}
+			if(b == 4) break; // Only supports SNP
+			fct = num_min(cpos, fsz);
+			memcpy(flanks[0], g->cns->buffer + cpos - fct, fct);
+			for(i=0;i<fct;i++) flanks[0][i] = bit_base_table[(int)flanks[0][i]];
+			flanks[0][fct] = 0;
+			fct = num_min(g->cns->size - cpos - 1, fsz);
+			memcpy(flanks[1], g->cns->buffer + cpos + 1, fct);
+			for(i=0;i<fct;i++) flanks[1][i] = bit_base_table[(int)flanks[1][i]];
+			flanks[0][fct] = 0;
+			if(g->mtag->size){
+				fprintf(out, "SNP %s\t", g->mtag->string);
+			} else {
+				fprintf(out, "SNP %llu\t", g->ncall);
+			}
+			fprintf(out, "%d\t%d\t%s\t%c\t%d\t%c\t%d\t%s\t%d\n", mpos, cpos, flanks[0], bit_base_table[a], cnts[a], bit_base_table[b], cnts[b], flanks[1], g->alt->buffer[cpos]);
+			break;
+		}
+		cpos ++;
+	}
 }
 
 static inline void check_node_edges_bspoa(BSPOA *g, u4i nidx, int rev){
@@ -2278,6 +2324,9 @@ static inline void simple_cns_bspoa(BSPOA *g){
 			push_u1v(g->alt, 0);
 		}
 	}
+	//reverse_u1v(g->cns);
+	//reverse_u1v(g->qlt);
+	//reverse_u1v(g->alt);
 	for(rid=0;rid<nseq;rid++){
 		cpos = 0;
 		//v = ref_bspoanodev(g->nodes, g->ndoffs->buffer[rid] + g->seqs->rdlens->buffer[rid] - 1);
@@ -2489,6 +2538,9 @@ static inline long double cns_bspoa(BSPOA *g){
 			push_u1v(g->alt, qs[nseq + 2]);
 		}
 	}
+	reverse_u1v(g->cns);
+	reverse_u1v(g->qlt);
+	reverse_u1v(g->alt);
 	if(bspoa_cns_debug > 2){
 		for(pos=0;pos<Int(mlen);pos++){
 			long double minp = dps[0][pos].sc[5];

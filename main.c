@@ -443,6 +443,7 @@ int main_poa(int argc, char **argv){
 		print_msa_sline_bspoa(lg, stderr);
 	}
 	print_msa_mline_bspoa(g, stdout);
+	print_snp_bspoa(g, stdout);
 	if(out){
 		fprintf(out, ">cns_seq\n%s\n", g->strs->string);
 		close_file(out);
