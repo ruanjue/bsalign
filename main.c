@@ -14,7 +14,7 @@ int usage(){
 	"\n"
 	"commands:\n"
 	" align       Pairwise alignment implemented by 8-bit encoded Banded Striped SIMD\n"
-	" edit        Pairwise alignment using edit distance implemented by 2-bit encoded Striped algorithm\n"
+	" edit        Pairwise alignment using edit distance implemented by 2-bit encoded banded Striped algorithm\n"
 	" poa         Multiple alignment implemented by 8-bit encoded Banded Striped SIMD Partial Order Alignment\n"
 	"Tips:\n"
 	"# To invoke affine gap cost pairwise/multiple alignment\n"
@@ -52,8 +52,10 @@ int usage_align(){
 int usage_edit(){
 	fprintf(stdout,
 	"Usage: bsalign edit [option] <input fasta/q.gz file>\n"
-	" -R <int>    Repeat times (for benchmarking) [1]\n"
+	" -W <int>    Bandwidth, 0: full length, [0]\n"
+	" -S          Uses SIMD codes, will disable bandwdith\n"
 	" -v          Verbose\n"
+	" -R <int>    Repeat times (for benchmarking) [1]\n"
 	);
 	return 1;
 }
@@ -91,6 +93,108 @@ int usage_poa(){
 	" set '-G trigger=0' to disable banded alignment, will be slower\n"
 	);
 	return 1;
+}
+
+int main_edit(int argc, char **argv){
+	FileReader *fr;
+	SeqBank *seqs;
+	BioSequence *seq;
+	seqalign_result_t rs;
+	u4v *cigars;
+	u1v *qseq, *tseq;
+	b1v *mempool;
+	char *alnstr[3];
+	int c, repm, repn, verbose, strn, sse, W;
+	repm = 1;
+	verbose = 0;
+	sse = 0;
+	W = 0;
+	while((c = getopt(argc, argv, "hSW:R:v")) != -1){
+		switch(c){
+			case 'W': W = atoi(optarg); break;
+			case 'R': repm = atoi(optarg); break;
+			case 'S': sse = 1; break;
+			case 'v': verbose ++; break;
+			default: return usage_edit();
+		}
+	}
+	if(optind < argc){
+		fr = open_all_filereader(argc - optind, argv + optind, 0);
+	} else {
+		return usage_edit();
+	}
+	seqs = init_seqbank();
+	seq  = init_biosequence();
+	mempool = init_b1v(1024);
+	qseq   = init_u1v(1024);
+	tseq   = init_u1v(1024);
+	cigars = init_u4v(64);
+	alnstr[0] = NULL;
+	alnstr[1] = NULL;
+	alnstr[2] = NULL;
+	strn = 0;
+	while(readseq_filereader(fr, seq)){
+		if(seq->seq->size == 0) continue;
+		push_seqbank(seqs, seq->tag->string, seq->tag->size, seq->seq->string, seq->seq->size);
+		if(seqs->nseq == 2){
+			clear_and_encap_u1v(qseq,  seqs->rdlens->buffer[0]);
+			bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[0], seqs->rdlens->buffer[0], qseq->buffer);
+			qseq->size = seqs->rdlens->buffer[0];
+			clear_and_encap_u1v(tseq,  seqs->rdlens->buffer[1]);
+			bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[1], seqs->rdlens->buffer[1], tseq->buffer);
+			tseq->size = seqs->rdlens->buffer[1];
+			for(repn=1;repn<repm;repn++){ // for benchmarking
+				if(sse){
+					rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, SEQALIGN_MODE_GLOBAL, verbose);
+				} else {
+					rs = striped_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, W, mempool, cigars, verbose);
+				}
+			}
+			if(sse){
+				rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, SEQALIGN_MODE_GLOBAL, verbose);
+			} else {
+				rs = striped_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, W, mempool, cigars, verbose);
+			}
+			if(rs.mat){
+				if(strn < rs.aln){
+					strn = rs.aln;
+					alnstr[0] = realloc(alnstr[0], strn + 1);
+					alnstr[1] = realloc(alnstr[1], strn + 1);
+					alnstr[2] = realloc(alnstr[2], strn + 1);
+				}
+				if(verbose){
+					u4i ci;
+					fprintf(stderr, "CIGAR: %d\t", rs.aln);
+					for(ci=0;ci<cigars->size;ci++){
+						if((cigars->buffer[ci] >> 4) == 1){
+							fprintf(stderr, "%c", "MIDNSHP=X*"[cigars->buffer[ci] & 0xf]);
+						} else {
+							fprintf(stderr, "%d%c", cigars->buffer[ci] >> 4, "MIDNSHP=X*"[cigars->buffer[ci] & 0xf]);
+						}
+					}
+					fprintf(stderr, "\n");
+				}
+				seqalign_cigar2alnstr(qseq->buffer, tseq->buffer, &rs, cigars, alnstr, strn);
+				fprintf(stdout, "%s\t%d\t+\t%d\t%d\t%s\t%d\t+\t%d\t%d\t", seqs->rdtags->buffer[0], Int(qseq->size), rs.qb, rs.qe, seqs->rdtags->buffer[1], Int(tseq->size), rs.tb, rs.te);
+				fprintf(stdout, "%d\t%.3f\t%d\t%d\t%d\t%d\n", rs.score, 1.0 * rs.mat / rs.aln, rs.mat, rs.mis, rs.ins, rs.del);
+				fprintf(stdout, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
+			}
+			clear_seqbank(seqs);
+		}
+	}
+	free_u1v(qseq);
+	free_u1v(tseq);
+	free_b1v(mempool);
+	free_u4v(cigars);
+	if(strn){
+		free(alnstr[0]);
+		free(alnstr[1]);
+		free(alnstr[2]);
+	}
+	free_biosequence(seq);
+	close_filereader(fr);
+	free_seqbank(seqs);
+	return 0;
 }
 
 int main_align(int argc, char **argv){
@@ -193,96 +297,6 @@ int main_align(int argc, char **argv){
 				fprintf(stdout, "%d\t%.3f\t%d\t%d\t%d\t%d\n", rs.score, 1.0 * rs.mat / rs.aln, rs.mat, rs.mis, rs.ins, rs.del);
 				fprintf(stdout, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
 				fflush(stdout);
-			}
-			clear_seqbank(seqs);
-		}
-	}
-	free_u1v(qseq);
-	free_u1v(tseq);
-	free_b1v(mempool);
-	free_u4v(cigars);
-	if(strn){
-		free(alnstr[0]);
-		free(alnstr[1]);
-		free(alnstr[2]);
-	}
-	free_biosequence(seq);
-	close_filereader(fr);
-	free_seqbank(seqs);
-	return 0;
-}
-
-int main_edit(int argc, char **argv){
-	FileReader *fr;
-	SeqBank *seqs;
-	BioSequence *seq;
-	seqalign_result_t rs;
-	u4v *cigars;
-	u1v *qseq, *tseq;
-	b1v *mempool;
-	char *alnstr[3];
-	int c, repm, repn, verbose, strn;
-	repm = 1;
-	verbose = 0;
-	while((c = getopt(argc, argv, "hR:v")) != -1){
-		switch(c){
-			case 'R': repm = atoi(optarg); break;
-			case 'v': verbose ++; break;
-			default: return usage_edit();
-		}
-	}
-	if(optind < argc){
-		fr = open_all_filereader(argc - optind, argv + optind, 0);
-	} else {
-		return usage_edit();
-	}
-	seqs = init_seqbank();
-	seq  = init_biosequence();
-	mempool = init_b1v(1024);
-	qseq   = init_u1v(1024);
-	tseq   = init_u1v(1024);
-	cigars = init_u4v(64);
-	alnstr[0] = NULL;
-	alnstr[1] = NULL;
-	alnstr[2] = NULL;
-	strn = 0;
-	while(readseq_filereader(fr, seq)){
-		if(seq->seq->size == 0) continue;
-		push_seqbank(seqs, seq->tag->string, seq->tag->size, seq->seq->string, seq->seq->size);
-		if(seqs->nseq == 2){
-			clear_and_encap_u1v(qseq,  seqs->rdlens->buffer[0]);
-			bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[0], seqs->rdlens->buffer[0], qseq->buffer);
-			qseq->size = seqs->rdlens->buffer[0];
-			clear_and_encap_u1v(tseq,  seqs->rdlens->buffer[1]);
-			bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[1], seqs->rdlens->buffer[1], tseq->buffer);
-			tseq->size = seqs->rdlens->buffer[1];
-			for(repn=1;repn<repm;repn++){ // for benchmarking
-				rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, SEQALIGN_MODE_GLOBAL, verbose);
-			}
-			rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, SEQALIGN_MODE_GLOBAL, verbose);
-			if(rs.mat){
-				if(strn < rs.aln){
-					strn = rs.aln;
-					alnstr[0] = realloc(alnstr[0], strn + 1);
-					alnstr[1] = realloc(alnstr[1], strn + 1);
-					alnstr[2] = realloc(alnstr[2], strn + 1);
-				}
-				if(verbose){
-					u4i ci;
-					fprintf(stderr, "CIGAR: %d\t", rs.aln);
-					for(ci=0;ci<cigars->size;ci++){
-						if((cigars->buffer[ci] >> 4) == 1){
-							fprintf(stderr, "%c", "MIDNSHP=X*"[cigars->buffer[ci] & 0xf]);
-						} else {
-							fprintf(stderr, "%d%c", cigars->buffer[ci] >> 4, "MIDNSHP=X*"[cigars->buffer[ci] & 0xf]);
-						}
-					}
-					fprintf(stderr, "\n");
-				}
-				seqalign_cigar2alnstr(qseq->buffer, tseq->buffer, &rs, cigars, alnstr, strn);
-				fprintf(stdout, "%s\t%d\t+\t%d\t%d\t%s\t%d\t+\t%d\t%d\t", seqs->rdtags->buffer[0], Int(qseq->size), rs.qb, rs.qe, seqs->rdtags->buffer[1], Int(tseq->size), rs.tb, rs.te);
-				fprintf(stdout, "%d\t%.3f\t%d\t%d\t%d\t%d\n", rs.score, 1.0 * rs.mat / rs.aln, rs.mat, rs.mis, rs.ins, rs.del);
-				fprintf(stdout, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
 			}
 			clear_seqbank(seqs);
 		}
