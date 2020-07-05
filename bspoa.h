@@ -622,7 +622,7 @@ static inline void print_snp_bspoa(BSPOA *g, FILE *out){
 	for(mpos=cpos=0;mpos<mlen;mpos++){
 		col = g->msacols->buffer + g->msaidxs->buffer[mpos] * mrow;
 		if(col[nseq] >= 4) continue;
-		while(g->alt->buffer[cpos] >= g->par->qlthi){
+		while(g->alt->buffer[cpos] >= g->par->qltlo){
 			memset(cnts, 0, 6 * sizeof(u4i));
 			for(i=0;i<nseq;i++){
 				cnts[col[i]] ++;
