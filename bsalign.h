@@ -202,7 +202,7 @@ typedef struct {
 #define striped_seqedit_qprof_size(qlen, bandwidth) ((num_max(qlen, bandwidth) + 1) * 4 * 8)
 static inline void striped_seqedit_set_query_prof(u1i *qseq, u4i qlen, u4i bandwidth, u8i *qprof);
 static inline void striped_seqedit_row_init(u8i *us[2], u4i W);
-static inline void striped_seqedit_row_movx(u8i *us[2][2], u4i W, u4i movx, int *heading_score, int heading_mat);
+static inline void striped_seqedit_row_movx(u8i *us[2][2], u4i W, u4i movx, int *heading_score);
 static inline void striped_seqedit_row_cal(u4i rbeg, u8i *us[2][2], u8i *hs, u8i *qprof, u4i W, u1i base);
 static inline seqalign_result_t striped_seqedit_backtrace(u8i *uts[2], u4i *begs, u4i W, u1i *qseq, int qend, u1i *tseq, int tend, u4v *cigars);
 static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, u4i bandwidth, b1v *mempool, u4v *cigars, int verbose);
@@ -369,6 +369,15 @@ static inline void striped_seqedit_set_query_prof(u1i *qseq, u4i qlen, u4i bandw
 	W = bandwidth / 64;
 	xlen = num_max(qlen, bandwidth);
 	memset(qprof, 0, 4 * (xlen + 1) * 8);
+#if 1
+	for(pos=0;pos<qlen;pos++){
+		qp = qprof + pos * 4 + qseq[pos];
+		x = num_min(63, pos / W);
+		for(j=0;j<=x;j++){
+			(qp - j * W * 4)[0] |= 1LLU << j;
+		}
+	}
+#else
 	for(x=0;x<=xlen;x++){
 		qp = qprof + 4 * x;
 		for(j=0;j<64;j++){
@@ -378,6 +387,7 @@ static inline void striped_seqedit_set_query_prof(u1i *qseq, u4i qlen, u4i bandw
 			}
 		}
 	}
+#endif
 }
 
 static inline void striped_seqedit_row_init(u8i *us[2], u4i W){
@@ -385,24 +395,18 @@ static inline void striped_seqedit_row_init(u8i *us[2], u4i W){
 	memset(us[1], 0xFF, W * sizeof(u8i));
 }
 
-static inline void striped_seqedit_row_movx(u8i *us[2][2], u4i W, u4i movx, int *sbeg, int hmat){
+static inline void striped_seqedit_row_movx(u8i *us[2][2], u4i W, u4i movx, int *sbeg){
 	u8i *p1, *p2, *p3, *p4, MASK;
 	u4i i, mov, div, cyc;
-	int h;
-	if(sbeg){
-		if(movx == 0){
-			sbeg[0] ++;
-		} else {
-			mov = num_min(movx, W * 64);
-			for(i=0;i+1<mov;i++){
-				sbeg[0] -= striped_seqedit_getval(us[1][0], W, i);
-				sbeg[0] += striped_seqedit_getval(us[1][1], W, i);
-			}
-			h = hmat + sbeg[0];
+	if(movx == 0){
+		sbeg[0] ++;
+	} else {
+		mov = num_min(movx, W * 64);
+		for(i=0;i<mov;i++){
 			sbeg[0] -= striped_seqedit_getval(us[1][0], W, i);
 			sbeg[0] += striped_seqedit_getval(us[1][1], W, i);
-			sbeg[0] = num_min(h, sbeg[0] + 1);
 		}
+		sbeg[0] ++;
 	}
 	if(movx == 0){
 		memcpy(us[0][0], us[1][0], W * sizeof(u8i));
@@ -443,7 +447,7 @@ static inline void striped_seqedit_row_movx(u8i *us[2][2], u4i W, u4i movx, int 
 		}
 	} else {
 		MASK = 0xFFFFFFFFFFFFFFFFLLU << (64 - 1);
-		for(i=div;i<W;i++){
+		for(i=0;i<mov;i++){
 			p1[i] = p2[i] >> 1;
 			p3[i] = (p4[i] >> 1) | MASK;
 		}
@@ -496,7 +500,7 @@ static inline void striped_seqedit_row_cal(u4i rbeg, u8i *us[2][2], u8i *hs, u8i
 	u8i s, u1, u2, u3, u4, v1, v2, h, h2;
 	u4i i, running;
 	v1 = 0x0000000000000000LLU;
-	v2 = 0xFFFFFFFFFFFFFFFFLLU;;
+	v2 = 0xFFFFFFFFFFFFFFFFLLU;
 	for(i=0;__builtin_expect(i<W, 0);i++){
 		s  = qprof[(rbeg + i) * 4 + base];
 		u1 = us[0][0][i];
@@ -514,7 +518,7 @@ static inline void striped_seqedit_row_cal(u4i rbeg, u8i *us[2][2], u8i *hs, u8i
 	while(running){ // SWAT
 		v1 <<= 1;
 		v2 <<= 1;
-		v2  |= 1;
+		v2 |= 1;
 		for(i=0;i<W;i++){
 			s  = qprof[(rbeg + i) * 4 + base];
 			h2 = hs[i];
@@ -619,6 +623,7 @@ static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1
 		memset(&rs, 0, sizeof(seqalign_result_t));
 		return rs;
 	}
+	bandwidth = roundup_times(bandwidth, 64);
 	if(bandwidth == 0 || bandwidth > qlen){
 		bandwidth = roundup_times(qlen, 64);
 	}
@@ -637,8 +642,8 @@ static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1
 		memp = (u8i*)(mempool->buffer + 8);
 		mempb = NULL;
 	} else {
-		mempb = malloc(mpsize);
-		memp = mempb + WORDSIZE;
+		mempb = (u8i*)malloc(mpsize);
+		memp = mempb + 1;
 	}
 	qprof  = memp; memp += striped_seqedit_qprof_size(qlen, bandwidth) / 8;
 	uts[0] = memp; memp += W * (tlen + 1);
@@ -665,7 +670,7 @@ static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1
 		movx = rbeg[1] - rbeg[0];
 		us[0][0] = us[2][0];
 		us[0][1] = us[2][1];
-		striped_seqedit_row_movx(us, W, movx, &sbeg, rbeg[1]? (qseq[rbeg[1] - 1] != tseq[i]) : 1);
+		striped_seqedit_row_movx(us, W, movx, &sbeg);
 		us[1][0] = uts[0] + (i + 1) * W;
 		us[1][1] = uts[1] + (i + 1) * W;
 		striped_seqedit_row_cal(rbeg[1], us, hs, qprof, W, tseq[i]);
@@ -675,7 +680,9 @@ static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1
 			score = sbeg;
 			v2    = 1;
 			error = 0;
-			fprintf(stdout, "[%04d:%c] rbeg=%d\tmov=%d\t", i, "ACGTN"[tseq[i]], rbeg[1], movx);
+			if(verbose > 1){
+				fprintf(stdout, "[%04d:%c] rbeg=%d\tmov=%d\t", i, "ACGTN"[tseq[i]], rbeg[1], movx);
+			}
 			for(j=0;j<(int)num_min(qlen-rbeg[1], bandwidth);j++){
 				b1 = striped_seqedit_getval(us[0][0], W, j);
 				b2 = striped_seqedit_getval(us[0][1], W, j);
@@ -691,15 +698,19 @@ static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1
 				b3 = striped_seqedit_getval(us[1][0], W, j);
 				b4 = striped_seqedit_getval(us[1][1], W, j);
 				if(error == 0 && u2 != vals[b3][b4]){
-					fflush(stdout);
+					fprintf(stdout, "\n"); fflush(stdout);
 					fprintf(stderr, "\n -- i=%d j=%d s=%c%c u=%d v=%d u2=%d should be %d in %s -- %s:%d --\n", i, j, "ACGTN"[qseq[rbeg[1] + j]], "ACGTN"[tseq[i]], u, v, vals[b3][b4], u2, __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
 					error = 1;
 				}
 				if(b3 == 0 && b4 == 1) score ++;
 				else if(b3 == 1 && b4 == 0) score --;
-				fprintf(stdout, "%c%03d:%c:%c ", "ACGTN"[qseq[rbeg[1] + j]], score, "-*+"[vals[b3][b4] + 1], "-*+"[v2 + 1]);
+				if(verbose > 1){
+					fprintf(stdout, "%c%03d:%c:%c ", "ACGTN"[qseq[rbeg[1] + j]], score, "-*+"[vals[b3][b4] + 1], "-*+"[v2 + 1]);
+				}
 			}
-			fprintf(stdout, "\n");
+			if(verbose > 1){
+				fprintf(stdout, "\n");
+			}
 		}
 		rbeg[0] = rbeg[1];
 	}
