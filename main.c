@@ -164,6 +164,7 @@ int main_edit(int argc, char **argv){
 				}
 				if(verbose){
 					u4i ci;
+					fflush(stdout);
 					fprintf(stderr, "CIGAR: %d\t", rs.aln);
 					for(ci=0;ci<cigars->size;ci++){
 						if((cigars->buffer[ci] >> 4) == 1){
