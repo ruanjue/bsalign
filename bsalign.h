@@ -364,27 +364,41 @@ typedef u4i (*seqalign_cigar2alnstr_func)(u1i *qseq, u1i *tseq, seqalign_result_
 static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int mode, u4i bandwidth, b1i matrix[16], b1i gapo1, b1i gape1, b1i gapo2, b1i gape2, int verbose);
 
 static inline void striped_seqedit_set_query_prof(u1i *qseq, u4i qlen, u4i bandwidth, u8i *qprof){
-	u8i *qp;
+	u8i *qp, *pq;
 	u4i xlen, x, pos, j, W;
 	W = bandwidth / 64;
 	xlen = num_max(qlen, bandwidth);
 	memset(qprof, 0, 4 * (xlen + 1) * 8);
 #if 1
+	// fill first W striped blocks
+	for(x=0;x<W;x++){
+		qp = qprof + 4 * x;
+		for(j=0;j<64;j++){
+			pos = x + j * W; // pos always less than qlen
+			if(pos < qlen){
+				qp[qseq[pos]] |= 1LLU << j;
+			}
+		}
+	}
+	// sliding
+	for(;x<=xlen;x++){
+		qp = qprof + 4 * x;
+		pq = qp - 4 * W;
+		qp[0] = pq[0] >> 1;
+		qp[1] = pq[1] >> 1;
+		qp[2] = pq[2] >> 1;
+		qp[3] = pq[3] >> 1;
+		pos = x + 63 * W;
+		if(pos < qlen){
+			qp[qseq[pos]] |= 1LLU << 63; // append the last one
+		}
+	}
+#else
 	for(pos=0;pos<qlen;pos++){
 		qp = qprof + pos * 4 + qseq[pos];
 		x = num_min(63, pos / W);
 		for(j=0;j<=x;j++){
 			(qp - j * W * 4)[0] |= 1LLU << j;
-		}
-	}
-#else
-	for(x=0;x<=xlen;x++){
-		qp = qprof + 4 * x;
-		for(j=0;j<64;j++){
-			pos = x + j * W;
-			if(pos < qlen){
-				qp[qseq[pos]] |= 1LLU << j;
-			}
 		}
 	}
 #endif
