@@ -816,11 +816,13 @@ static inline void close_pgzf(PGZF *pz){
 static inline size_t read_pgzf4filereader(void *obj, void *dat, size_t len){ return read_pgzf((PGZF*)obj, dat, len); }
 static inline void close_pgzf4filereader(void *obj){
 	PGZF *pz;
+	FILE *file;
 	pz = (PGZF*)obj;
-	if(pz->file != stdin){
-		fclose(pz->file);
+	file = pz->file;
+	close_pgzf(pz);
+	if(file != stdin){
+		fclose(file);
 	}
-	return close_pgzf(pz);
 }
 
 static inline size_t write_pgzf4filewriter(void *obj, void *dat, size_t len){ return write_pgzf((PGZF*)obj, dat, len); }
