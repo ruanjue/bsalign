@@ -52,6 +52,8 @@ int usage_align(){
 int usage_edit(){
 	fprintf(stdout,
 	"Usage: bsalign edit [option] <input fasta/q.gz file>\n"
+	" -m <string> Align mode: global/overlap, [global]\n"
+	"             in overlap mode, disable bandwidth\n"
 	" -W <int>    Bandwidth, 0: full length, [0]\n"
 	" -S          Uses SIMD codes, will disable bandwdith\n"
 	" -v          Verbose\n"
@@ -103,14 +105,25 @@ int main_edit(int argc, char **argv){
 	u4v *cigars;
 	u1v *qseq, *tseq;
 	b1v *mempool;
-	char *alnstr[3];
-	int c, repm, repn, verbose, strn, sse, W;
+	char *alnstr[3], *str, *tok;
+	int c, repm, repn, verbose, strn, mode, sse, W;
 	repm = 1;
 	verbose = 0;
 	sse = 0;
 	W = 0;
-	while((c = getopt(argc, argv, "hSW:R:v")) != -1){
+	while((c = getopt(argc, argv, "hm:SW:R:v")) != -1){
 		switch(c){
+			case 'm': 
+			str = optarg;
+			while(str && *str){
+				tok = index(str, ','); if(tok) *tok = '\0';
+				if(strcasecmp(str, "GLOBAL") == 0) mode = SEQALIGN_MODE_GLOBAL;
+				else if(strcasecmp(str, "OVERLAP") == 0) mode = SEQALIGN_MODE_OVERLAP;
+				else return usage_align();
+				if(tok) str = tok + 1;
+				else break;
+			}
+			break;
 			case 'W': W = atoi(optarg); break;
 			case 'R': repm = atoi(optarg); break;
 			case 'S': sse = 1; break;
@@ -122,6 +135,10 @@ int main_edit(int argc, char **argv){
 		fr = open_all_filereader(argc - optind, argv + optind, 0);
 	} else {
 		return usage_edit();
+	}
+	if(mode == SEQALIGN_MODE_OVERLAP && W){
+		fprintf(stderr, " ** disable band in bsalign-edit's overlap mode ** \n");
+		W = 0;
 	}
 	seqs = init_seqbank();
 	seq  = init_biosequence();
@@ -147,13 +164,13 @@ int main_edit(int argc, char **argv){
 				if(sse){
 					rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, SEQALIGN_MODE_GLOBAL, verbose);
 				} else {
-					rs = striped_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, W, mempool, cigars, verbose);
+					rs = striped_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mode, W, mempool, cigars, verbose);
 				}
 			}
 			if(sse){
 				rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, SEQALIGN_MODE_GLOBAL, verbose);
 			} else {
-				rs = striped_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, W, mempool, cigars, verbose);
+				rs = striped_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mode, W, mempool, cigars, verbose);
 			}
 			if(rs.mat){
 				if(strn < rs.aln){

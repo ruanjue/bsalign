@@ -202,10 +202,11 @@ typedef struct {
 #define striped_seqedit_qprof_size(qlen, bandwidth) ((num_max(qlen, bandwidth) + 1) * 4 * 8)
 static inline void striped_seqedit_set_query_prof(u1i *qseq, u4i qlen, u4i bandwidth, u8i *qprof);
 static inline void striped_seqedit_row_init(u8i *us[2], u4i W);
-static inline void striped_seqedit_row_movx(u8i *us[2][2], u4i W, u4i movx, int *heading_score);
-static inline void striped_seqedit_row_cal(u4i rbeg, u8i *us[2][2], u8i *hs, u8i *qprof, u4i W, u1i base);
-static inline seqalign_result_t striped_seqedit_backtrace(u8i *uts[2], u4i *begs, u4i W, u1i *qseq, int qend, u1i *tseq, int tend, u4v *cigars);
-static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, u4i bandwidth, b1v *mempool, u4v *cigars, int verbose);
+static inline void striped_seqedit_row_movx(u8i *us[2][2], u4i W, u4i movx, int mode, int *heading_score);
+static inline void striped_seqedit_row_cal(u4i rbeg, u8i *us[2][2], u8i *hs, u8i *qprof, int mode, u4i W, u1i base);
+static inline seqalign_result_t striped_seqedit_backtrace(u8i *uts[2], u4i *begs, u4i W, u1i *qseq, int qend, u1i *tseq, int tend, int mode, u4v *cigars);
+// mode: SEQALIGN_MODE_GLOBAL | SEQALIGN_MODE_OVERLAP (full query but can be partial target)
+static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, int mode, u4i bandwidth, b1v *mempool, u4v *cigars, int verbose);
 
 #define striped_epi2_seqedit_getval(xs, W, pos) (((xs)[((((pos) % (W)) * WORDSIZE) + (((pos) / (W)) >> 3))] >> (((((pos) / ((W)))) & 0x7))) & 0x1)
 #define striped_epi2_seqedit_qprof_size(qlen) (roundup_times(qlen, WORDSIZE * 8) / 2)
@@ -409,9 +410,15 @@ static inline void striped_seqedit_row_init(u8i *us[2], u4i W){
 	memset(us[1], 0xFF, W * sizeof(u8i));
 }
 
-static inline void striped_seqedit_row_movx(u8i *us[2][2], u4i W, u4i movx, int *sbeg){
+static inline void striped_seqedit_row_movx(u8i *us[2][2], u4i W, u4i movx, int mode, int *sbeg){
 	u8i *p1, *p2, *p3, *p4, MASK;
 	u4i i, mov, div, cyc;
+	if(mode == SEQALIGN_MODE_OVERLAP){
+		sbeg[0] = 0;
+		memcpy(us[0][0], us[1][0], W * sizeof(u8i));
+		memcpy(us[0][1], us[1][1], W * sizeof(u8i));
+		return;
+	}
 	if(movx == 0){
 		sbeg[0] ++;
 	} else {
@@ -510,11 +517,11 @@ static inline void striped_seqedit_row_movx(u8i *us[2][2], u4i W, u4i movx, int 
 // y = d ^ (b | c | d)
 // the same will be with v' = h - u
 //
-static inline void striped_seqedit_row_cal(u4i rbeg, u8i *us[2][2], u8i *hs, u8i *qprof, u4i W, u1i base){
+static inline void striped_seqedit_row_cal(u4i rbeg, u8i *us[2][2], u8i *hs, u8i *qprof, int mode, u4i W, u1i base){
 	u8i s, u1, u2, u3, u4, v1, v2, h, h2;
 	u4i i, running;
 	v1 = 0x0000000000000000LLU;
-	v2 = 0xFFFFFFFFFFFFFFFFLLU;
+	v2 = (mode == SEQALIGN_MODE_OVERLAP)? 0x0000000000000000LLU : 0xFFFFFFFFFFFFFFFFLLU;
 	for(i=0;__builtin_expect(i<W, 0);i++){
 		s  = qprof[(rbeg + i) * 4 + base];
 		u1 = us[0][0][i];
@@ -532,7 +539,9 @@ static inline void striped_seqedit_row_cal(u4i rbeg, u8i *us[2][2], u8i *hs, u8i
 	while(running){ // SWAT
 		v1 <<= 1;
 		v2 <<= 1;
-		v2 |= 1;
+		if(mode == SEQALIGN_MODE_GLOBAL){
+			v2 |= 1;
+		}
 		for(i=0;i<W;i++){
 			s  = qprof[(rbeg + i) * 4 + base];
 			h2 = hs[i];
@@ -554,7 +563,7 @@ static inline void striped_seqedit_row_cal(u4i rbeg, u8i *us[2][2], u8i *hs, u8i
 	}
 }
 
-static inline seqalign_result_t striped_seqedit_backtrace(u8i *uts[2], u4i *begs, u4i W, u1i *qseq, int x, u1i *tseq, int y, u4v *cigars){
+static inline seqalign_result_t striped_seqedit_backtrace(u8i *uts[2], u4i *begs, u4i W, u1i *qseq, int x, u1i *tseq, int y, int mode, u4v *cigars){
 	seqalign_result_t rs;
 	u4i cg, op;
 	int u1, u2, u3, u4;
@@ -611,7 +620,7 @@ static inline seqalign_result_t striped_seqedit_backtrace(u8i *uts[2], u4i *begs
 		rs.ins += rs.qb;
 		rs.qb = 0;
 	}
-	if(rs.tb){
+	if(mode == SEQALIGN_MODE_GLOBAL && rs.tb){
 		op = 2;
 		if(op == (cg & 0xf)){
 			cg += 0x10 * rs.tb;
@@ -628,21 +637,25 @@ static inline seqalign_result_t striped_seqedit_backtrace(u8i *uts[2], u4i *begs
 	return rs;
 }
 
-static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, u4i bandwidth, b1v *mempool, u4v *cigars, int verbose){
+static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, int mode, u4i bandwidth, b1v *mempool, u4v *cigars, int verbose){
 	seqalign_result_t rs;
 	u8i *memp, *mempb, mpsize, *qprof, *uts[2], *us[3][2], *hs;
-	u4i i, W, movx, *begs, rbeg[2];
-	int rx, ry, smin, sbeg;
+	u4i i, k, W, movx, *begs, rbeg[2];
+	int rx, ry, smin, srow, sbeg;
 	if(qlen == 0 || tlen == 0){
 		memset(&rs, 0, sizeof(seqalign_result_t));
 		return rs;
 	}
-	bandwidth = roundup_times(bandwidth, 64);
-	if(bandwidth == 0 || bandwidth > qlen){
+	if(mode == SEQALIGN_MODE_OVERLAP){ // disable band
 		bandwidth = roundup_times(qlen, 64);
-	}
-	if(bandwidth < 2 * qlen / tlen){ // bandwidth is too small
-		bandwidth = roundup_times(2 * qlen / tlen, 64);
+	} else {
+		bandwidth = roundup_times(bandwidth, 64);
+		if(bandwidth == 0 || bandwidth > qlen){
+			bandwidth = roundup_times(qlen, 64);
+		}
+		if(bandwidth < 2 * qlen / tlen){ // bandwidth is too small
+			bandwidth = roundup_times(2 * qlen / tlen, 64);
+		}
 	}
 	W = bandwidth / 64;
 	mpsize = 0;
@@ -677,17 +690,32 @@ static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1
 	rbeg[0] = rbeg[1] = 0;
 	begs[0] = 0;
 	for(i=0;i<tlen;i++){
-		rbeg[1] = ((u8i)i * qlen) / tlen;
-		rbeg[1] = (rbeg[1] < bandwidth / 2)? 0 : rbeg[1] - bandwidth / 2;
-		rbeg[1] = (rbeg[1] + bandwidth > roundup_times(qlen, 64))? roundup_times(qlen, 64) - bandwidth : rbeg[1];
+		if(mode == SEQALIGN_MODE_OVERLAP){
+			rbeg[1] = 0;
+		} else {
+			rbeg[1] = ((u8i)i * qlen) / tlen;
+			rbeg[1] = (rbeg[1] < bandwidth / 2)? 0 : rbeg[1] - bandwidth / 2;
+			rbeg[1] = (rbeg[1] + bandwidth > roundup_times(qlen, 64))? roundup_times(qlen, 64) - bandwidth : rbeg[1];
+		}
 		begs[i + 1] = rbeg[1];
 		movx = rbeg[1] - rbeg[0];
 		us[0][0] = us[2][0];
 		us[0][1] = us[2][1];
-		striped_seqedit_row_movx(us, W, movx, &sbeg);
+		striped_seqedit_row_movx(us, W, movx, mode, &sbeg);
 		us[1][0] = uts[0] + (i + 1) * W;
 		us[1][1] = uts[1] + (i + 1) * W;
-		striped_seqedit_row_cal(rbeg[1], us, hs, qprof, W, tseq[i]);
+		striped_seqedit_row_cal(rbeg[1], us, hs, qprof, mode, W, tseq[i]);
+		if(mode == SEQALIGN_MODE_OVERLAP){
+			srow = 0;
+			for(k=0;k<W;k++){ // we don't care the padding, it should always add W * 64 - qlen
+				srow -= __builtin_popcountll(us[1][0][k]);
+				srow += __builtin_popcountll(us[1][1][k]);
+			}
+			if(srow < smin){
+				smin = srow;
+				ry   = i;
+			}
+		}
 		if(verbose){
 			int vals[2][2] = {{0, 1}, {-1, 2}};
 			int j, b1, b2, b3, b4, u, u2, v, v2, score, error;
@@ -728,15 +756,19 @@ static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1
 		}
 		rbeg[0] = rbeg[1];
 	}
-	rs = striped_seqedit_backtrace(uts, begs, W, qseq, rx, tseq, ry, cigars);
-	rs.score = sbeg;
-	for(i=0;i<W;i++){
-		rs.score -= __builtin_popcountll(us[1][0][i]);
-		rs.score += __builtin_popcountll(us[1][1][i]);
-	}
-	for(i=rbeg[1]+bandwidth;i>qlen;i--){
-		rs.score += striped_seqedit_getval(us[1][0], W, i - 1 - rbeg[1]);
-		rs.score -= striped_seqedit_getval(us[1][1], W, i - 1 - rbeg[1]);
+	rs = striped_seqedit_backtrace(uts, begs, W, qseq, rx, tseq, ry, mode, cigars);
+	if(mode == SEQALIGN_MODE_OVERLAP){
+		rs.score = smin - (bandwidth - qlen);
+	} else {
+		rs.score = sbeg;
+		for(i=0;i<W;i++){
+			rs.score -= __builtin_popcountll(us[1][0][i]);
+			rs.score += __builtin_popcountll(us[1][1][i]);
+		}
+		for(i=rbeg[1]+bandwidth;i>qlen;i--){
+			rs.score += striped_seqedit_getval(us[1][0], W, i - 1 - rbeg[1]);
+			rs.score -= striped_seqedit_getval(us[1][1], W, i - 1 - rbeg[1]);
+		}
 	}
 	if(mempb) free(mempb);
 	return rs;
