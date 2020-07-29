@@ -111,6 +111,7 @@ int main_edit(int argc, char **argv){
 	verbose = 0;
 	sse = 0;
 	W = 0;
+	mode = SEQALIGN_MODE_GLOBAL;
 	while((c = getopt(argc, argv, "hm:SW:R:v")) != -1){
 		switch(c){
 			case 'm': 
