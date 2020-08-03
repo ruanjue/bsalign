@@ -143,7 +143,7 @@ int main_edit(int argc, char **argv){
 	}
 	seqs = init_seqbank();
 	seq  = init_biosequence();
-	mempool = init_b1v(1024);
+	mempool = adv_init_b1v(1024, 0, WORDSIZE, 0);
 	qseq   = init_u1v(1024);
 	tseq   = init_u1v(1024);
 	cigars = init_u4v(64);
@@ -268,7 +268,7 @@ int main_align(int argc, char **argv){
 	banded_striped_epi8_seqalign_set_score_matrix(mtx, par.M, par.X);
 	seqs = init_seqbank();
 	seq  = init_biosequence();
-	mempool = init_b1v(1024);
+	mempool = adv_init_b1v(1024, 0, WORDSIZE, 0);
 	qseq   = init_u1v(1024);
 	tseq   = init_u1v(1024);
 	cigars = init_u4v(64);
