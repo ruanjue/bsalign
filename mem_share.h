@@ -63,6 +63,8 @@ typedef long long b8i;
 typedef float f4i;
 typedef long double f8i;
 
+#define SYS_ALIGNED_BASE	8
+
 #define Int(x) ((int)(x))
 #define UInt(x) ((unsigned)(x))
 #define Int32(x) ((b4i)(x))
@@ -164,6 +166,7 @@ static inline size_t roundup_times(size_t v, size_t base){
 
 static inline void* aligned_malloc(size_t size, int base){
 	u1i *p, *q;
+	if(base <= SYS_ALIGNED_BASE) return malloc(size);
 	p = malloc(size + base);
 	if(p == NULL) return NULL;
 	q = (u1i*)(((u8i)(p + base)) & (~(((u8i)base) - 1)));
@@ -173,6 +176,7 @@ static inline void* aligned_malloc(size_t size, int base){
 
 static inline void* aligned_calloc(size_t size, int base){
 	u1i *p, *q;
+	if(base <= SYS_ALIGNED_BASE) return calloc(size, 1);
 	p = calloc(size + base, 1);
 	if(p == NULL) return NULL;
 	q = (u1i*)(((u8i)(p + base)) & (~(((u8i)base) - 1)));
@@ -182,6 +186,7 @@ static inline void* aligned_calloc(size_t size, int base){
 
 static inline void* aligned_realloc(void *buffer, size_t size, size_t cap, int base){
 	u1i *p, *q, pad;
+	if(base <= SYS_ALIGNED_BASE) return realloc(buffer, cap);
 	q = (u1i*)buffer;
 	pad = *(q - 1);
 	p = q - pad;
@@ -195,8 +200,9 @@ static inline void* aligned_realloc(void *buffer, size_t size, size_t cap, int b
 	return q;
 }
 
-static inline void aligned_free(void *buffer){
+static inline void aligned_free(void *buffer, int base){
 	u1i *p, *q;
+	if(base <= SYS_ALIGNED_BASE) return free(buffer);
 	q = (u1i*)buffer;
 	p = q - *(q - 1);
 	free(p);

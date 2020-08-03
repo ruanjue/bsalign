@@ -186,7 +186,7 @@ static inline BSPOA* init_bspoa(BSPOAPar par){
 	g->qlen  = 0;
 	g->qprof[0] = adv_init_b1v(4 * 1024, 0, WORDSIZE, WORDSIZE);
 	g->qprof[1] = adv_init_b1v(4 * 1024, 0, WORDSIZE, WORDSIZE);
-	g->memp  = init_b1v(1024);
+	g->memp  = adv_init_b1v(1024, 0, WORDSIZE, 0);
 	g->mmblk = 0;
 	g->mmcnt = 0;
 	g->heap = init_u8v(32);
@@ -1539,7 +1539,7 @@ static inline u4i backcal_del_bspoa(BSPOA *g, u4i node, int qb, int Hs[2], int b
 	BC.nidx = node;
 	BC.qscr = Hs[1];
 	BC.step = 1;
-	array_heap_push((bcal_t*)heap->buffer, heap->size, heap->cap, bcal_t, BC, num_cmp(a.step, b.step));
+	array_heap_push(heap->buffer, heap->size, heap->cap, bcal_t, BC, num_cmp(a.step, b.step));
 	while(heap->size){
 		BC = ((bcal_t*)heap->buffer)[0];
 		array_heap_remove((bcal_t*)heap->buffer, heap->size, heap->cap, bcal_t, 0, num_cmp(a.step, b.step));
@@ -1566,7 +1566,7 @@ static inline u4i backcal_del_bspoa(BSPOA *g, u4i node, int qb, int Hs[2], int b
 			CC.nidx = e->node;
 			CC.qscr = BC.qscr - ((bt == SEQALIGN_BT_D)? g->par->E : g->par->Q);
 			CC.step = BC.step + 1;
-			array_heap_push((bcal_t*)heap->buffer, heap->size, heap->cap, bcal_t, CC, num_cmp(a.step, b.step));
+			array_heap_push(heap->buffer, heap->size, heap->cap, bcal_t, CC, num_cmp(a.step, b.step));
 		}
 	}
 	fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);

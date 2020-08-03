@@ -32,7 +32,7 @@ do {	\
 			print_backtrace(stderr, 20);	\
 			exit(1);	\
 		}	\
-		(ary) = _ary_;	\
+		ary = (typeof(ary))_ary_;	\
 	}	\
 	_ary_[(size)++] = _p_;	\
 	while(i){	\
@@ -44,6 +44,7 @@ do {	\
 	}	\
 } while(0)
 
+// please don't call it on list->aligned > SYS_ALIGNED_BASE(8) or list->n_head > 0
 #define list_heap_push(list, id, cmp_expr) array_heap_push((list)->buffer, (list)->size, (list)->cap, typeof(*(list)->buffer), id, cmp_expr)
 
 #define array_heap_remove(ary, len, cap, e_type, _idx, cmp_expr)\
@@ -152,11 +153,11 @@ static inline list_type* adv_init_##list_type(size_type init_size, int mem_zero,
 }	\
 	\
 static inline list_type* init_##list_type(size_type init_size){	\
-	return adv_init_##list_type(init_size, 0, 16, 0);	\
+	return adv_init_##list_type(init_size, 0, SYS_ALIGNED_BASE, 0);	\
 }	\
 	\
 static inline void list_type##_init(list_type *list, size_type init_size){	\
-	adv_##list_type##_init(list, init_size, 0, 16, 0);	\
+	adv_##list_type##_init(list, init_size, 0, SYS_ALIGNED_BASE, 0);	\
 }	\
 	\
 static inline int head_sl_##list_type(list_type *list, size_type len){	\
@@ -179,7 +180,7 @@ static inline int head_sr_##list_type(list_type *list, size_type len){	\
 }	\
 	\
 static inline void renew_##list_type(list_type *list, size_type init_size){	\
-	if(list->buffer) aligned_free(list->buffer - list->n_head);	\
+	if(list->buffer) aligned_free(list->buffer - list->n_head, list->aligned);	\
 	adv_##list_type##_init(list, init_size, list->mem_zero, list->aligned, list->n_head);	\
 }	\
 	\
@@ -443,9 +444,9 @@ static inline void append_array_##list_type(list_type *list1, e_type *ary, size_
 	list1->size += size;	\
 }	\
 	\
-static inline void free_##list_type(list_type *list){ if(list){ aligned_free(list->buffer - list->n_head); free(list); } }	\
+static inline void free_##list_type(list_type *list){ if(list){ aligned_free(list->buffer - list->n_head, list->aligned); free(list); } }	\
 	\
-static inline void list_type##_free(list_type *list){ aligned_free(list->buffer - list->n_head); list->buffer = NULL; }	\
+static inline void list_type##_free(list_type *list){ aligned_free(list->buffer - list->n_head, list->aligned); list->buffer = NULL; }	\
 
 #define define_list_ext(list_type, e_type, size_type, cmp_func)	\
 static inline size_type delete_##list_type(list_type *list, e_type e){	\

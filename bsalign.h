@@ -665,6 +665,10 @@ static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1
 	mpsize += W * 8; // us[2][]
 	mpsize += (tlen + 1) * 4;
 	if(mempool){
+		if(mempool->aligned < WORDSIZE){
+			fflush(stdout); fprintf(stderr, " -- mempool should be aligned by (%d) but (%d) bytes in %s -- %s:%d --\n", WORDSIZE, mempool->aligned, __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+			abort();
+		}
 		clear_and_encap_b1v(mempool, mpsize);
 		memp = (u8i*)(mempool->buffer + 8);
 		mempb = NULL;
@@ -1253,6 +1257,10 @@ static inline seqalign_result_t striped_epi2_seqedit_pairwise(u1i *qseq, u4i qle
 	mpsize += W * WORDSIZE; // hs[]
 	//mpsize += 2 * W * WORDSIZE + 3 * 2 * 8 * WORDSIZE; // TODO: remove it after debug
 	if(mempool){
+		if(mempool->aligned < WORDSIZE){
+			fflush(stdout); fprintf(stderr, " -- mempool should be aligned by (%d) but (%d) bytes in %s -- %s:%d --\n", WORDSIZE, mempool->aligned, __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+			abort();
+		}
 		clear_and_encap_b1v(mempool, mpsize);
 		memp = mempool->buffer + WORDSIZE;
 		mempb = NULL;
@@ -3066,6 +3074,10 @@ static inline seqalign_result_t banded_striped_epi8_seqalign_pairwise(u1i *qseq,
 	mpsize += bandwidth * ((piecewise + 1)); // us[0][], es[0][], qs[0][]
 	mpsize += roundup_times((tlen + 1) * sizeof(int), WORDSIZE); // row offset
 	if(mempool){
+		if(mempool->aligned < WORDSIZE){
+			fflush(stdout); fprintf(stderr, " -- mempool should be aligned by (%d) but (%d) bytes in %s -- %s:%d --\n", WORDSIZE, mempool->aligned, __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+			abort();
+		}
 		clear_and_encap_b1v(mempool, mpsize);
 		memp = mempool->buffer + WORDSIZE;
 		mempb = NULL;
