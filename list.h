@@ -32,6 +32,7 @@ do {	\
 			print_backtrace(stderr, 20);	\
 			exit(1);	\
 		}	\
+		(ary) = _ary_;	\
 	}	\
 	_ary_[(size)++] = _p_;	\
 	while(i){	\
