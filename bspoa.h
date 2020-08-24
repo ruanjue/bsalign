@@ -599,11 +599,13 @@ static inline void print_msa_mline_bspoa(BSPOA *g, FILE *out){
 	}
 	str[i] = 0;
 	fprintf(out, "CNS\t%d\t%s\n", Int(g->cns->size), str);
+	str += g->cns->size + 1;
 	for(i=0;i<g->qlt->size;i++){
 		str[i] = '!' +  g->qlt->buffer[i]; // Phred + 33
 	}
 	str[i] = 0;
 	fprintf(out, "QLT\t%d\t%s\n", Int(g->qlt->size), str);
+	str += g->cns->size + 1;
 	for(i=0;i<g->alt->size;i++){
 		str[i] = '!' +  g->alt->buffer[i]; // Phred + 33
 	}
