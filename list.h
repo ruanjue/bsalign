@@ -48,11 +48,12 @@ do {	\
 #define list_heap_push(list, id, cmp_expr) array_heap_push((list)->buffer, (list)->size, (list)->cap, typeof(*(list)->buffer), id, cmp_expr)
 
 #define array_heap_remove(ary, len, cap, e_type, _idx, cmp_expr)\
-do {	\
-	e_type *_ary_, _pp_;	\
-	size_t swap, idx;	\
+({	\
+	e_type *_ary_, _pp_, _ret_;	\
 	_ary_ = (e_type*)(ary);	\
+	size_t swap, idx;	\
 	idx = (size_t)(_idx);	\
+	_ret_ = _ary_[idx];	\
 	_ary_[idx] = _ary_[--(len)];	\
 	e_type a, b;	\
 	while((size_t)((idx << 1) + 1) < (size_t)(len)){	\
@@ -67,7 +68,8 @@ do {	\
 		_pp_ = _ary_[idx]; _ary_[idx] = _ary_[swap]; _ary_[swap] = _pp_;	\
 		idx = swap;	\
 	}	\
-} while(0)
+	_ret_;	\
+})
 
 #define list_heap_remove(list, _idx, cmp_expr) array_heap_remove((list)->buffer, (list)->size, (list)->cap, typeof(*(list)->buffer), _idx, cmp_expr)
 
@@ -101,6 +103,9 @@ do {	\
 	else memset(&_ret_, 0xFFU, sizeof(e_type));	\
 	_ret_;	\
 })
+
+// make sure you have included "sort.h"
+#define sort_list(list, cmpgt_expr) sort_array((list)->buffer, (list)->size, typeof((list)->buffer[0]), cmpgt_expr)
 
 /**
  * List
@@ -258,6 +263,11 @@ static inline void push_##list_type(list_type *list, e_type e){	\
 	list->buffer[list->size++] = e;	\
 }	\
 	\
+static inline e_type ring_get_##list_type(list_type *list, size_type idx){	\
+	idx = (list->off + idx) % list->cap;	\
+	return list->buffer[idx];	\
+}	\
+	\
 static inline e_type* ring_ref_##list_type(list_type *list, size_type idx){	\
 	idx = (list->off + idx) % list->cap;	\
 	return list->buffer + idx;	\
@@ -287,7 +297,7 @@ static inline e_type* ring_pop_##list_type(list_type *list){	\
 	} else return NULL;	\
 }	\
 	\
-static inline void ring_shift_##list_type(list_type *list, e_type e){	\
+static inline void ring_unshift_##list_type(list_type *list, e_type e){	\
 	list->off = (list->off + list->cap - 1) % list->cap;	\
 	list->buffer[list->off] = e;	\
 	if(list->size < list->cap){	\
@@ -295,12 +305,12 @@ static inline void ring_shift_##list_type(list_type *list, e_type e){	\
 	}	\
 }	\
 	\
-static inline e_type* ring_unshift_##list_type(list_type *list){	\
+static inline e_type* ring_shift_##list_type(list_type *list){	\
 	size_type idx;	\
 	if(list->size){	\
 		list->size --;	\
+		idx = list->off;	\
 		list->off = (list->off + 1) % list->cap;	\
-		idx = (list->off + list->size) % list->cap;	\
 		return list->buffer + idx;	\
 	} else return NULL;	\
 }	\
