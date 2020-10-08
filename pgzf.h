@@ -813,8 +813,8 @@ static inline void close_pgzf(PGZF *pz){
 	free(pz);
 }
 
-static inline size_t read_pgzf4filereader(void *obj, void *dat, size_t len){ return read_pgzf((PGZF*)obj, dat, len); }
-static inline void close_pgzf4filereader(void *obj){
+static inline ssize_t read_pgzf4filereader(void *obj, char *dat, size_t len){ return read_pgzf((PGZF*)obj, dat, len); }
+static inline int close_pgzf4filereader(void *obj){
 	PGZF *pz;
 	FILE *file;
 	pz = (PGZF*)obj;
@@ -823,6 +823,7 @@ static inline void close_pgzf4filereader(void *obj){
 	if(file != stdin){
 		fclose(file);
 	}
+	return 0;
 }
 
 static inline size_t write_pgzf4filewriter(void *obj, void *dat, size_t len){ return write_pgzf((PGZF*)obj, dat, len); }
@@ -830,6 +831,51 @@ static inline void close_pgzf4filewriter(void *obj){
 	PGZF *pz;
 	pz = (PGZF*)obj;
 	return close_pgzf(pz);
+}
+
+static inline ssize_t pgzf_io_read(void *obj, char *buffer, size_t size){
+	PGZF *pz;
+	pz = (PGZF*)obj;
+	return read_pgzf(pz, (void*)buffer, size);
+}
+
+static inline ssize_t pgzf_io_write(void *obj, const char *buffer, size_t size){
+	PGZF *pz;
+	pz = (PGZF*)obj;
+	return write_pgzf(pz, (void*)buffer, size);
+}
+
+static inline int pgzf_io_seek(void *obj, off64_t *pos, int whence){
+	UNUSED(obj);
+	UNUSED(pos);
+	UNUSED(whence);
+	return -1;
+}
+
+static inline int pgzf_io_close(void *obj){
+	PGZF *pz;
+	FILE *file;
+	pz = (PGZF*)obj;
+	file = pz->file;
+	close_pgzf(pz);
+	close_file(file);
+	return 0;
+}
+
+static const cookie_io_functions_t pgzf_io_funs = { pgzf_io_read, pgzf_io_write, pgzf_io_seek, pgzf_io_close };
+
+static inline FILE* fopen_pgzf_reader(FILE *in, u4i bufsize, int ncpu){
+	PGZF *pz;
+	if(bufsize == 0) bufsize = 1024 * 1024;
+	pz = open_pgzf_reader(in, bufsize, ncpu);
+	return fopencookie(pz, "r", pgzf_io_funs);
+}
+
+static inline FILE* fopen_pgzf_writer(FILE *out, u4i bufsize, int ncpu, int level){
+	PGZF *pz;
+	if(bufsize == 0) bufsize = 1024 * 1024;
+	pz = open_pgzf_writer(out, bufsize, ncpu, level);
+	return fopencookie(pz, "w", pgzf_io_funs);
 }
 
 #endif
