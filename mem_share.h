@@ -141,6 +141,10 @@ static inline void print_backtrace(FILE *out, int max_frame){
 }
 #endif
 
+static int _DEBUG_LOG_ = 0;
+#define _DEBUG_LOGFILE_	stderr
+#define _DEBUG_LOGFILE_NO_	STDERR_FILENO
+
 static inline void num2bits(u8i num, char bits[65]){
 	int i;
 	for(i=0;i<64;i++){
@@ -1363,6 +1367,72 @@ static inline void* mem_load_obj_file(const obj_desc_t *desc, char *_path, size_
 	free(path);
 	free(shmp);
 	//register_mem_share_file_lock(lock);
+	return mem + 4 * sizeof(size_t);
+}
+
+static inline void* mem_share_obj(void *obj, size_t mem_type, const obj_desc_t *desc, size_t cnt, size_t aux_data, char *_path, int free_obj){
+	void *mem;
+	size_t size, sz, psize, *msg;
+	char *lock, *shadow, *path, *shmp;
+	char hostname[65];
+	FILE *file;
+	int fd, ret;
+	if(desc == NULL) return NULL;
+	if((mem_type & 0x01) == 0){
+		fprintf(stderr, " -- Illegal mem_type (%u) to call mem_dump, object should have standalone memory in %s -- %s:%d --\n", (int)mem_type, __FUNCTION__, __FILE__, __LINE__);
+		exit(1);
+	}
+	path = absolute_filename(_path);
+	shmp = strdup(path);
+	replace_char(shmp, '/', '_', 0);
+	size = mem_size_obj(obj, mem_type, desc, 0, cnt);
+	psize = getpagesize();
+	sz = size + 4 * sizeof(size_t);
+	gethostname(hostname, 64);
+	shadow = alloca(strlen(shmp) + strlen(hostname) + 40);
+	sprintf(shadow, "%s.mem_share.%s.%ld.shm", shmp, hostname, gethostid());
+	fd = shm_open(shadow, O_CREAT | O_RDWR, 0777);
+	if(fd == -1){
+		fprintf(stderr, " -- shm_open failed: %s in %s -- %s:%d --\n", shadow, __FUNCTION__, __FILE__, __LINE__); fflush(stderr); exit(1);
+	}
+	ret = ftruncate(fd, (sz + psize - 1) / psize * psize);
+	if(ret == -1){
+		fprintf(stderr, " -- ftruncate failed: %s in %s -- %s:%d --\n", shadow, __FUNCTION__, __FILE__, __LINE__); fflush(stderr); exit(1);
+	}
+	file = fdopen(fd, "w+");
+	fseek(file, 0, SEEK_SET);
+	fwrite(&size, sizeof(size_t), 1, file);
+	fwrite(&mem_type, sizeof(size_t), 1, file);
+	fwrite(&cnt, sizeof(size_t), 1, file);
+	fwrite(&aux_data, sizeof(size_t), 1, file);
+	mem_dump_obj(obj, mem_type, desc, size, cnt, file, free_obj); // dump and or free
+	fflush(file);
+	mem = mmap(0, (sz + psize - 1) / psize * psize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if(mem == MAP_FAILED){
+		perror("Cannot mmap");
+		return NULL;
+	}
+	fclose(file);
+	mem_load_obj(mem + 4 * sizeof(size_t), aux_data, mem_type, desc, 0, cnt);
+	//if(desc->post) desc->post(mem + 4 * sizeof(size_t), *aux_data);
+	lock = alloca(strlen(shmp) + strlen(hostname) + 20);
+	sprintf(lock, "%s.mem_share.%s.%ld", shmp, hostname, gethostid());
+	if((fd = shm_open(lock, O_CREAT | O_RDWR, 0777)) == -1){
+		fprintf(stderr, " -- shm_open failed: %s in %s -- %s:%d --\n", lock, __FUNCTION__, __FILE__, __LINE__); fflush(stderr); exit(1);
+	}
+	if((ret = ftruncate(fd, psize)) == -1){
+		fprintf(stderr, " -- ftruncate failed: %s in %s -- %s:%d --\n", lock, __FUNCTION__, __FILE__, __LINE__); fflush(stderr); exit(1);
+	}
+	msg = mmap(0, psize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if(msg == MAP_FAILED){
+		perror("Cannot mmap");
+		exit(1);
+	}
+	msg[0] = (size_t)mem;
+	msg[1] = size;
+	fprintf(stderr, "-- mem_share '%s' at %p:%llu --\n", path, mem, (u8i)size); fflush(stderr);
+	free(path);
+	free(shmp);
 	return mem + 4 * sizeof(size_t);
 }
 
