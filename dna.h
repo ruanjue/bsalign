@@ -627,7 +627,6 @@ static inline void fast_revbits2basebank(BaseBank *bnk, u8i *bits, u8i off, u8i 
 			dat = dna_rev_seq(dat, gap);
 			bnk->bits[bnk->size >> 5] |= dat;
 			bnk->size += gap;
-			//off += gap;
 			len -= gap;
 		}
 	}
@@ -733,6 +732,8 @@ static inline void bitseq_basebank(BaseBank *bnk, u8i off, u8i len, u1i *seq){
 		seq[i] = bits2bit(bnk->bits, off + i);
 	}
 }
+
+#define fwdbitseq_basebank(bnk, off, len, seq) bitseq_basebank(bnk, off, len, seq)
 
 static inline void revseq_basebank(BaseBank *bnk, u8i off, u8i len, char *seq){
 	u8i i;
