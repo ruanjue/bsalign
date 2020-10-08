@@ -267,45 +267,46 @@ do {	\
 
 #define quick_median_array(_rs, _rs_size, e_type, expr)	\
 ({	\
+	e_type *_qm_rs, _qm_key;	\
+	_qm_rs = (e_type*)(_rs);	\
+	size_t _qm_size;	\
+	_qm_size = (size_t)(_rs_size);	\
 	do {	\
-		e_type *rs, key;	\
-		rs = (e_type*)(_rs);	\
-		size_t size;	\
-		size = (size_t)(_rs_size);	\
-		size_t i, j, beg, mid, end;	\
-		if(size == 0){	\
+		size_t _qm_i, _qm_j, _qm_beg, _qm_mid, _qm_end;	\
+		if(_qm_size == 0){	\
 			break;	\
 		}	\
-		beg = 0;	\
-		end = size - 1;	\
-		e_type tmp, a, b;	\
-		while(beg < end){	\
-			mid = beg + (end - beg) / 2;	\
-			a = rs[beg]; b = rs[mid];	\
-			if(expr){ tmp = rs[beg]; rs[beg] = rs[mid]; rs[mid] = tmp; }	\
-			a = rs[mid]; b = rs[end];	\
+		_qm_beg = 0;	\
+		_qm_end = _qm_size - 1;	\
+		e_type _qm_tmp, a, b;	\
+		while(_qm_beg < _qm_end){	\
+			_qm_mid = _qm_beg + (_qm_end - _qm_beg) / 2;	\
+			a = _qm_rs[_qm_beg]; b = _qm_rs[_qm_mid];	\
+			if(expr){ _qm_tmp = _qm_rs[_qm_beg]; _qm_rs[_qm_beg] = _qm_rs[_qm_mid]; _qm_rs[_qm_mid] = _qm_tmp; }	\
+			a = _qm_rs[_qm_mid]; b = _qm_rs[_qm_end];	\
 			if(expr){	\
-				tmp = rs[end]; rs[end] = rs[mid]; rs[mid] = tmp;	\
-				a = rs[beg]; b = rs[mid];	\
-				if(expr){ tmp = rs[beg]; rs[beg] = rs[mid]; rs[mid] = tmp; }	\
+				_qm_tmp = _qm_rs[_qm_end]; _qm_rs[_qm_end] = _qm_rs[_qm_mid]; _qm_rs[_qm_mid] = _qm_tmp;	\
+				a = _qm_rs[_qm_beg]; b = _qm_rs[_qm_mid];	\
+				if(expr){ _qm_tmp = _qm_rs[_qm_beg]; _qm_rs[_qm_beg] = _qm_rs[_qm_mid]; _qm_rs[_qm_mid] = _qm_tmp; }	\
 			}	\
-			key = rs[mid];	\
-			i = beg + 1; j = end - 1;	\
+			_qm_key = _qm_rs[_qm_mid];	\
+			_qm_i = _qm_beg + 1; _qm_j = _qm_end - 1;	\
 			while(1){	\
-				a = key;	\
-				while(b = rs[i], (expr)) i ++;	\
-				b = key;	\
-				while(a = rs[j], (expr)) j --;	\
-				if(i < j){	\
-					tmp = rs[i]; rs[i] = rs[j]; rs[j] = tmp;	\
-					i ++; j --;	\
+				a = _qm_key;	\
+				while(b = _qm_rs[_qm_i], (expr)) _qm_i ++;	\
+				b = _qm_key;	\
+				while(a = _qm_rs[_qm_j], (expr)) _qm_j --;	\
+				if(_qm_i < _qm_j){	\
+					_qm_tmp = _qm_rs[_qm_i]; _qm_rs[_qm_i] = _qm_rs[_qm_j]; _qm_rs[_qm_j] = _qm_tmp;	\
+					_qm_i ++; _qm_j --;	\
 				} else break;	\
 			}	\
-			if(i == j){ i ++; j --; }	\
-			if(i <= size / 2) beg = i;	\
-			else end = j;	\
+			if(_qm_i == _qm_j){ _qm_i ++; _qm_j --; }	\
+			if(_qm_i <= _qm_size / 2) _qm_beg = _qm_i;	\
+			else _qm_end = _qm_j;	\
 		}	\
 	} while(0);	\
+	_qm_rs[_qm_size / 2];	\
 })
 
 
