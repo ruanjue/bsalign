@@ -52,10 +52,10 @@ int usage_align(){
 int usage_edit(){
 	fprintf(stdout,
 	"Usage: bsalign edit [option] <input fasta/q.gz file>\n"
-	" -m <string> Align mode: global/overlap, [global]\n"
-	"             in overlap mode, disable bandwidth\n"
+	" -m <string> Align mode: global/extend/overlap/kmer, [global]\n"
+	"             in overlap and extend mode, disable bandwidth\n"
 	" -W <int>    Bandwidth, 0: full length, [0]\n"
-	" -S          Uses SIMD codes, will disable bandwdith\n"
+	" -k <int>    Kmer size, [15]\n"
 	" -v          Verbose\n"
 	" -R <int>    Repeat times (for benchmarking) [1]\n"
 	);
@@ -106,13 +106,13 @@ int main_edit(int argc, char **argv){
 	u1v *qseq, *tseq;
 	b1v *mempool;
 	char *alnstr[3], *str, *tok;
-	int c, repm, repn, verbose, strn, mode, sse, W;
+	int c, repm, repn, verbose, strn, mode, W, ksz;
 	repm = 1;
 	verbose = 0;
-	sse = 0;
 	W = 0;
+	ksz = 15;
 	mode = SEQALIGN_MODE_GLOBAL;
-	while((c = getopt(argc, argv, "hm:SW:R:v")) != -1){
+	while((c = getopt(argc, argv, "hm:k:W:R:v")) != -1){
 		switch(c){
 			case 'm': 
 			str = optarg;
@@ -120,14 +120,16 @@ int main_edit(int argc, char **argv){
 				tok = index(str, ','); if(tok) *tok = '\0';
 				if(strcasecmp(str, "GLOBAL") == 0) mode = SEQALIGN_MODE_GLOBAL;
 				else if(strcasecmp(str, "OVERLAP") == 0) mode = SEQALIGN_MODE_OVERLAP;
+				else if(strcasecmp(str, "EXTEND") == 0) mode = SEQALIGN_MODE_EXTEND;
+				else if(strcasecmp(str, "KMER") == 0) mode = SEQALIGN_MODE_KMER;
 				else return usage_align();
 				if(tok) str = tok + 1;
 				else break;
 			}
 			break;
 			case 'W': W = atoi(optarg); break;
+			case 'k': ksz = atoi(optarg); break;
 			case 'R': repm = atoi(optarg); break;
-			case 'S': sse = 1; break;
 			case 'v': verbose ++; break;
 			default: return usage_edit();
 		}
@@ -162,14 +164,14 @@ int main_edit(int argc, char **argv){
 			bitseq_basebank(seqs->rdseqs, seqs->rdoffs->buffer[1], seqs->rdlens->buffer[1], tseq->buffer);
 			tseq->size = seqs->rdlens->buffer[1];
 			for(repn=1;repn<repm;repn++){ // for benchmarking
-				if(sse){
-					rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, SEQALIGN_MODE_GLOBAL, verbose);
+				if(mode == SEQALIGN_MODE_KMER){
+					rs = kmer_striped_seqedit_pairwise(ksz, qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, verbose);
 				} else {
 					rs = striped_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mode, W, mempool, cigars, verbose);
 				}
 			}
-			if(sse){
-				rs = striped_epi2_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, SEQALIGN_MODE_GLOBAL, verbose);
+			if(mode == SEQALIGN_MODE_KMER){
+				rs = kmer_striped_seqedit_pairwise(ksz, qseq->buffer, qseq->size, tseq->buffer, tseq->size, mempool, cigars, verbose);
 			} else {
 				rs = striped_seqedit_pairwise(qseq->buffer, qseq->size, tseq->buffer, tseq->size, mode, W, mempool, cigars, verbose);
 			}
@@ -448,7 +450,7 @@ int main_poa(int argc, char **argv){
 	}
 	seqs = init_seqbank();
 	seq = init_biosequence();
-	bspoa_cns_debug = verbose;
+	_DEBUG_LOG_ = verbose;
 	g  = init_bspoa(par);
 	lg = init_bspoa(rpar);
 	beg_bspoa(g);
@@ -464,7 +466,7 @@ int main_poa(int argc, char **argv){
 	if(par.remsa){
 		int recnt;
 		for(recnt=0;recnt<par.remsa;recnt++){
-			if(bspoa_cns_debug){
+			if(_DEBUG_LOG_){
 				fprintf(stdout, "## TOBE MSA\n");
 				print_msa_sline_bspoa(g, stdout);
 			}
