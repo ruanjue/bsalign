@@ -37,19 +37,19 @@ typedef struct {
 #define FILEREADER_ATTR_TEXT	4
 #define FILEREADER_ATTR_USER	5 // defined by user
 
-typedef size_t (*read_data_func)(void *obj, void *dat, size_t len);
-typedef void (*close_input_func)(void *obj);
+//typedef size_t (*read_data_func)(void *obj, void *dat, size_t len);
+//typedef void (*close_input_func)(void *obj);
 
-static inline size_t _read_data_file(void *obj, void *dat, size_t len){ return fread(dat, 1, len, (FILE*)obj); }
-static inline void _close_input_file(void *obj){ if(obj) fclose((FILE*)obj); }
-static inline void _close_input_proc(void *obj){ if(obj) pclose((FILE*)obj); }
+static inline ssize_t _read_data_file(void *obj, char *dat, size_t len){ return fread(dat, 1, len, (FILE*)obj); }
+static inline int _close_input_file(void *obj){ if(obj) fclose((FILE*)obj); return 0; }
+static inline int _close_input_proc(void *obj){ if(obj) pclose((FILE*)obj); return 0; }
 
 typedef struct {
 	int file_attr;
 	char *filename;
 	void *_file;
-	read_data_func _read;
-	close_input_func _close;
+	cookie_read_function_t  *_read;
+	cookie_close_function_t *_close;
 } file_src_t;
 define_list_core(filesrcv, file_src_t, int, 0xFF);
 
@@ -106,8 +106,8 @@ static inline void* file_src_thread_func(void *obj){
 	FileReader *fr;
 	file_src_t *fc;
 	void *_file;
-	read_data_func _read;
-	close_input_func _close;
+	cookie_read_function_t  *_read;
+	cookie_close_function_t *_close;
 	size_t off, cnt, len;
 	fr = (FileReader*)obj;
 	while(fr->running){
@@ -136,8 +136,8 @@ static inline void* file_src_thread_func(void *obj){
 					break;
 				case FILEREADER_ATTR_STDIN:
 					if(_file == NULL){
-						_file = fc->_file = stdin;
-						_read = fc->_read = _read_data_file;
+						_file  = fc->_file;
+						_read  = fc->_read = _read_data_file;
 						_close = fc->_close = NULL;
 					}
 				case FILEREADER_ATTR_PROC:
@@ -289,6 +289,7 @@ static inline int push_filereader(FileReader *fr, char *filename){
 	while(len && filename[len-1] == ' ') len --;
 	if(len == 0 || strcmp(filename, "-") == 0){
 		f->filename = NULL;
+		f->_file = stdin;
 		f->file_attr = FILEREADER_ATTR_STDIN;
 	} else if(filename[len-1] == '|'){
 		f->filename = malloc(len);
@@ -328,7 +329,7 @@ static inline int push_text_filereader(FileReader *fr, char *str, size_t len){
 	return f->file_attr;
 }
 
-static inline int push_user_filereader(FileReader *fr, void *_file, read_data_func _read, close_input_func _close){
+static inline int push_user_filereader(FileReader *fr, void *_file, cookie_read_function_t *_read, cookie_close_function_t *_close){
 	file_src_t *f;
 	f = next_ref_filesrcv(fr->files);
 	f->_file = _file;
@@ -337,6 +338,10 @@ static inline int push_user_filereader(FileReader *fr, void *_file, read_data_fu
 	f->filename = NULL;
 	f->file_attr = FILEREADER_ATTR_USER;
 	return f->file_attr;
+}
+
+static inline int push_file_filereader(FileReader *fr, FILE *in){
+	return push_user_filereader(fr, in, _read_data_file, _close_input_file);
 }
 
 static inline void push_all_filereader(FileReader *fr, int nfile, char **filenames){
@@ -424,8 +429,8 @@ static inline int asyn_readline_filereader(FileReader *fr, String *line){
 static inline int directed_readline_filereader(FileReader *fr, String *line){
 	file_src_t *fc;
 	void *_file;
-	read_data_func _read;
-	close_input_func _close;
+	cookie_read_function_t  *_read;
+	cookie_close_function_t *_close;
 	u8i i, nc;
 	int ch;
 	int ret;
