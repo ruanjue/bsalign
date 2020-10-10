@@ -562,11 +562,11 @@ static inline u4i seqalign_cigar2alnstr(u1i *qseq, u1i *tseq, seqalign_result_t 
 	return z;
 }
 
-static inline void seqalign_cigar2alnstr_print(u1i *qseq, u1i *tseq, seqalign_result_t *rs, u4v *cigars, FILE *out){
+static inline void seqalign_cigar2alnstr_print(char *qtag, u1i *qseq, char *ttag, u1i *tseq, seqalign_result_t *rs, u4v *cigars, FILE *out){
 	char *alnstr[3];
 	alnstr[0] = alnstr[1] = alnstr[2] = NULL;
 	seqalign_cigar2alnstr(qseq, tseq, rs, cigars, alnstr, 0);
-	fprintf(out, "%d\t%0.3f\t%d\t%d\t%d\t%d\n", rs->score, 1.0 * rs->mat / num_max(rs->aln, 1), rs->mat, rs->mis, rs->ins, rs->del);
+	fprintf(out, "%s\t%d\t%d\t%s\t%d\t%d\t%d\t%0.3f\t%d\t%d\t%d\t%d\n", qtag, rs->qb, rs->qe, ttag, rs->tb, rs->te, rs->score, 1.0 * rs->mat / num_max(rs->aln, 1), rs->mat, rs->mis, rs->ins, rs->del);
 	fprintf(out, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
 	free(alnstr[0]);
 	free(alnstr[1]);
@@ -1175,6 +1175,7 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 	kmap = 0;
 	maps = NULL;
 	clear_b1v(mempool);
+//#define LOCAL_DEBUG
 	do {
 		typedef struct { u4i kflg:1, kmer:30, kdir:1, koff; } _tmp_kmer_t;
 		typedef struct { _tmp_kmer_t kmers[2]; } _tmp_khit_t;
@@ -1296,6 +1297,18 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 			b ++;
 		}
 		kcnt = b;
+#ifdef LOCAL_DEBUG
+		for(i=1;i<kcnt;i++){
+			if(khits[i].kmers[0].koff >= qlen){
+				fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+				abort();
+			}
+			if(khits[i].kmers[0].koff <= khits[i-1].kmers[0].koff){
+				fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+				abort();
+			}
+		}
+#endif
 		// filter bad ends
 		b = 0; e = kcnt;
 		xoffs = (int*)lisx[0];
@@ -1332,11 +1345,23 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 		if(m < UInt(num_min(qlen, tlen) * 0.05)){
 			break;
 		}
-		memmove(khits, khits + b, kcnt - b);
+		memmove(khits, khits + b, (kcnt - b) * sizeof(_tmp_khit_t));
 		kmap = kcnt - b;
 		maps = (u8i*)khits;
 		// convert khits to u8i
-		for(i=0;i<kcnt;i++){
+#ifdef LOCAL_DEBUG
+		for(i=1;i<kmap;i++){
+			if(khits[i].kmers[0].koff >= qlen){
+				fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+				abort();
+			}
+			if(khits[i].kmers[0].koff <= khits[i-1].kmers[0].koff){
+				fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+				abort();
+			}
+		}
+#endif
+		for(i=0;i<kmap;i++){
 			maps[i] = (((u8i)khits[i].kmers[0].koff) << 32) | (khits[i].kmers[1].koff);
 		}
 	} while(0);
@@ -1344,6 +1369,18 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 	if(kmap == 0){
 		return striped_seqedit_pairwise(qseq, qlen, tseq, tlen, SEQALIGN_MODE_GLOBAL, 0, mempool, cigars, verbose);
 	}
+#ifdef LOCAL_DEBUG
+	for(i=1;i<kmap;i++){
+		if((maps[i] >> 32) >= qlen){
+			fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+			abort();
+		}
+		if((maps[i] >> 32) <= (maps[i-1] >> 32)){
+			fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+			abort();
+		}
+	}
+#endif
 	encap_b1v(mempool, roundup_times(kmap * sizeof(u8i), WORDSIZE));
 	mempool->size = roundup_times(kmap * sizeof(u8i), WORDSIZE);
 	maps = (u8i*)mempool->buffer;
@@ -1351,6 +1388,9 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 	khf = (ksz - 1) / 2;
 	ZEROS(&RS);
 	mode = SEQALIGN_MODE_KMER;
+#ifdef LOCAL_DEBUG
+	u4v *cigs = init_u4v(64);
+#endif
 	for(i=0;i<=kmap;i++){
 		if(i == kmap){
 			qe = qlen;
@@ -1359,19 +1399,23 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 		} else {
 			qe = (maps[i] >> 32) + (ksz / 2);
 			te = maps[i] + (ksz / 2);
+			ml ++;
 		}
 		if(qb == qe && tb == te){
-			_push_cigar_u4v(cigars, SEQALIGN_CIGAR_M, 1);
-			RS.mat ++;
-			RS.aln ++;
-			ml ++;
 		} else {
 			if(ml){
-				//fprintf(stderr, "[KMAP] %d kmer matching\n", ml);
+				_push_cigar_u4v(cigars, SEQALIGN_CIGAR_M, ml);
+				RS.mat += ml;
+				RS.aln += ml;
+#ifdef LOCAL_DEBUG
+				fprintf(stderr, "[KMAP] %d kmer matching\n", ml);
+#endif
 				ml = 0;
 			}
-			//fprintf(stderr, "[KMAP] mode%d %d-%d:%d\t%d-%d:%d\t%d\n", mode, qb, qe, qe - qb, tb, te, te - tb, Int(qe) - Int(te));
-			//clear_u4v(cigars);
+#ifdef LOCAL_DEBUG
+			fprintf(stderr, "[KMAP] mode%d %d-%d:%d\t%d-%d:%d\t%d\n", mode, qb, qe, qe - qb, tb, te, te - tb, Int(qe) - Int(te));
+			clear_u4v(cigs);
+#endif
 			if(mode == SEQALIGN_MODE_KMER){
 				reverse_array(qseq, qe, u1i);
 				reverse_array(tseq, te, u1i);
@@ -1380,26 +1424,44 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 				reverse_array(tseq, te, u1i);
 				RS.qb = qe - RS2.qe;
 				RS.tb = te - RS2.te;
+				RS.qe = qe;
+				RS.te = te;
 				reverse_u4v(cigars);
-				//seqalign_cigar2alnstr_print(qseq + RS.qb, tseq + RS.tb, &RS2, cigars, stderr);
+#ifdef LOCAL_DEBUG
+				seqalign_cigar2alnstr_print("Q", qseq + RS.qb, "T", tseq + RS.tb, &RS2, cigars, stderr);
+#endif
 			} else {
+#ifdef LOCAL_DEBUG
+				RS2 = striped_seqedit_pairwise(qseq + qb, qe - qb, tseq + tb, te - tb, mode | SEQALIGN_MODE_CIGRESV, 0, mempool, cigs, verbose);
+				seqalign_cigar2alnstr_print("Q", qseq + qb, "T", tseq + tb, &RS2, cigs, stderr);
+				u4i j;
+				for(j=0;j<cigs->size;j++){
+					_push_cigar_u4v(cigars, cigs->buffer[j] & 0xF, cigs->buffer[j] >> 4);
+				}
+#else
 				RS2 = striped_seqedit_pairwise(qseq + qb, qe - qb, tseq + tb, te - tb, mode | SEQALIGN_MODE_CIGRESV, 0, mempool, cigars, verbose);
-				//seqalign_cigar2alnstr_print(qseq + qb, tseq + tb, &RS2, cigars, stderr);
+#endif
+				RS.qe = qb + RS2.qe;
+				RS.te = tb + RS2.te;
 			}
-			RS.qe = qe;
-			RS.te = te;
+			maps = (u8i*)mempool->buffer; // In case of striped_seqedit_pairwise change the mempool
 			RS.mat += RS2.mat;
 			RS.mis += RS2.mis;
 			RS.ins += RS2.ins;
 			RS.del += RS2.del;
 			RS.aln += RS2.aln;
 			RS.score += RS2.score;
+#ifdef LOCAL_DEBUG
+			seqalign_cigar2alnstr_print("Q", qseq, "T", tseq, &RS, cigars, stderr);
+#endif
 		}
 		qb = qe + 1;
 		tb = te + 1;
 		mode = SEQALIGN_MODE_GLOBAL;
 	}
-	//ZEROS(&RS);
+#ifdef LOCAL_DEBUG
+	free_u4v(cigs);
+#endif
 	return RS;
 }
 
