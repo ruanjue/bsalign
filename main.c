@@ -55,7 +55,7 @@ int usage_edit(){
 	" -m <string> Align mode: global/extend/overlap/kmer, [global]\n"
 	"             in overlap and extend mode, disable bandwidth\n"
 	" -W <int>    Bandwidth, 0: full length, [0]\n"
-	" -k <int>    Kmer size, [15]\n"
+	" -k <int>    Kmer size (<=15), [13]\n"
 	" -v          Verbose\n"
 	" -R <int>    Repeat times (for benchmarking) [1]\n"
 	);
@@ -75,7 +75,7 @@ int usage_poa(){
 	" -Q <string> Penalty for gap2 open, [0,0]\n"
 	" -P <string> Penalty for gap2 extension, [0,0]\n"
 	" -G <string> misc parameters for POA, <tag>=<val>\n"
-	"             Defaults: refmode=0,refbonus=1,nrec=20,trigger=10,remsa=1,rma_win=5,qltlo=30,qlthi=35,\\"
+	"             Defaults: refmode=0,refbonus=1,nrec=20,kmer=15,trigger=1,remsa=1,rma_win=5,qltlo=30,qlthi=35,\n"
 	"                       psub=0.05,pins=0.05,pdel=0.10,piex=0.25,pdex=0.30,hins=0.10,hdel=0.20\n"
 	"              refmode: whether the first sequences is reference sequence, useful in polishing\n"
 	"              refbonus: base match score on reference will be M + refbonus\n"
@@ -110,7 +110,7 @@ int main_edit(int argc, char **argv){
 	repm = 1;
 	verbose = 0;
 	W = 0;
-	ksz = 15;
+	ksz = 13;
 	mode = SEQALIGN_MODE_GLOBAL;
 	while((c = getopt(argc, argv, "hm:k:W:R:v")) != -1){
 		switch(c){
@@ -352,7 +352,7 @@ int main_poa(int argc, char **argv){
 	par  = DEFAULT_BSPOA_PAR;
 	rpar = DEFAULT_BSPOA_PAR;
 	par.M = 2; par.X = -6; par.O = -3; par.E = -2; par.Q = 0; par.P = 0;
-	rpar.M = 1; rpar.X = -2; rpar.O = 0; rpar.E = -1; rpar.Q = 0; rpar.P = 0;
+	rpar.ksz = 0; rpar.M = 1; rpar.X = -2; rpar.O = 0; rpar.E = -1; rpar.Q = 0; rpar.P = 0;
 	repm = 1;
 	verbose = 0;
 	msabeg = 0;
@@ -404,6 +404,7 @@ int main_poa(int argc, char **argv){
 					else if(strncasecmp("hins", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.hins = atof(str + mats[2].rm_so);
 					else if(strncasecmp("hdel", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.hdel = atof(str + mats[2].rm_so);
 					else if(strncasecmp("nrec", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.nrec = atof(str + mats[2].rm_so);
+					else if(strncasecmp("kmer", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.ksz = atoi(str + mats[2].rm_so);
 					else if(strncasecmp("trigger", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.bwtrigger = atof(str + mats[2].rm_so);
 					else if(strncasecmp("refmode", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.refmode = atoi(str + mats[2].rm_so);
 					else if(strncasecmp("refbonus", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.refbonus = atoi(str + mats[2].rm_so);
