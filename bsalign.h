@@ -1022,8 +1022,10 @@ static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1
 		if(bandwidth == 0 || bandwidth > qlen){
 			bandwidth = roundup_times(qlen, 64);
 		}
-		if(bandwidth < 2 * qlen / tlen){ // bandwidth is too small
-			bandwidth = roundup_times(2 * qlen / tlen, 64);
+		if(bandwidth < qlen){
+			if(bandwidth < ((qlen + tlen - 1) / tlen) + 1){ // two bands are disconnected
+				bandwidth = roundup_times((qlen + tlen - 1) / tlen + 1, 64);
+			}
 		}
 	}
 	W = bandwidth / 64;
