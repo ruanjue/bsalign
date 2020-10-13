@@ -1122,7 +1122,8 @@ static inline void del_read_nodes_bspoa(BSPOA *g, u2i rid, u4i rb, u4i re){
 #endif
 		e->cov --;
 		(e + 1)->cov --;
-		if(e->cov == 0 && e->is_aux == 0){ // keep aux edge
+		//if(e->cov == 0 && e->is_aux == 0){ // keep aux edge
+		if(e->cov == 0){ // keep aux edge
 			del_edge_bspoa(g, x, eidx);
 		}
 		u = x;
