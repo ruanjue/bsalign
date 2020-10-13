@@ -87,6 +87,7 @@ int usage_poa(){
 	"              qlthi: high cns quality\n"
 	"              psub/pins/pdel/piex/pdex: for consensus, probs. of mis/ins/del/ins_ext/del_ext\n"
 	"              hins/hdel: probs of ins/del in homopolymer region\n"
+	" -L          Print MSA in 'one seq one line'\n"
 	" -R <int>    Repeat times (for benchmarking) [1]\n"
 	" -v          Verbose\n"
 	"# different sequencing error pattern\n"
@@ -347,12 +348,13 @@ int main_poa(int argc, char **argv){
 	regex_t reg;
 	regmatch_t mats[3];
 	char *str, *tok, *cnsfn;
-	int c, repm, repn, verbose;
+	int c, repm, repn, mline, verbose;
 	int msabeg, msaend, msacnt, rmabeg, rmaend;
 	par  = DEFAULT_BSPOA_PAR;
 	rpar = DEFAULT_BSPOA_PAR;
-	par.M = 2; par.X = -6; par.O = -3; par.E = -2; par.Q = 0; par.P = 0;
-	rpar.ksz = 0; rpar.M = 1; rpar.X = -2; rpar.O = 0; rpar.E = -1; rpar.Q = 0; rpar.P = 0;
+	 par.ksz = 13; par.alnmode = SEQALIGN_MODE_OVERLAP;  par.M = 2;  par.X = -6; par.O = -3;  par.E = -2;  par.Q = 0;  par.P = 0;
+	rpar.ksz = 0; rpar.alnmode =  SEQALIGN_MODE_GLOBAL; rpar.M = 1; rpar.X = -2; rpar.O = 0; rpar.E = -1; rpar.Q = 0; rpar.P = 0;
+	mline = 1;
 	repm = 1;
 	verbose = 0;
 	msabeg = 0;
@@ -368,7 +370,7 @@ int main_poa(int argc, char **argv){
 		fprintf(stderr, " -- REGCOMP: %s --\n", regtag); fflush(stderr);
 		exit(1);
 	}
-	while((c = getopt(argc, argv, "hvo:m:W:M:X:O:E:Q:P:G:T:R:")) != -1){
+	while((c = getopt(argc, argv, "hvo:m:W:M:X:O:E:Q:P:G:LT:R:")) != -1){
 		switch(c){
 			case 'h': return usage_poa();
 			case 'v': verbose ++; break;
@@ -434,6 +436,7 @@ int main_poa(int argc, char **argv){
 					}
 					str += mats[0].rm_eo;
 				}
+			case 'L': mline = 0; break;
 			case 'R': repm = atoi(optarg); break;
 			default: return usage_poa();
 		}
@@ -478,7 +481,11 @@ int main_poa(int argc, char **argv){
 		local_remsa_bspoa(g, rmabeg, rmaend, NULL, NULL, NULL, NULL, NULL, lg);
 		print_msa_sline_bspoa(lg, stderr);
 	}
-	print_msa_mline_bspoa(g, stdout);
+	if(mline){
+		print_msa_mline_bspoa(g, stdout);
+	} else {
+		print_msa_sline_bspoa(g, stdout);
+	}
 	print_snp_bspoa(g, stdout);
 	if(out){
 		fprintf(out, ">cns_seq\n%s\n", g->strs->string);
