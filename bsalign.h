@@ -3073,8 +3073,8 @@ static inline u4i banded_striped_epi8_seqalign_row_max(b1i *us, int *ubegs, u4i 
 		Max[i] = mm_set1_epi32(SEQALIGN_SCORE_MIN);
 		Idx[i] = mm_set1_epi32(0);
 	}
-	for(i=0;i<WORDSIZE/4;i++){ ary[0][i] = i; } Idx[0] =  Pos[0] = mm_load((xint*)ary[0]);
-	for(i=0;i<WORDSIZE/4;i++){ ary[0][i] = i + WORDSIZE / 4; } Idx[1] = Pos[1] = mm_load((xint*)ary[0]);
+	for(i=0;i<WORDSIZE/4;i++){ ary[0][i] = i; }                    Idx[0] = Pos[0] = mm_load((xint*)ary[0]);
+	for(i=0;i<WORDSIZE/4;i++){ ary[0][i] = i + WORDSIZE / 4; }     Idx[1] = Pos[1] = mm_load((xint*)ary[0]);
 	for(i=0;i<WORDSIZE/4;i++){ ary[0][i] = i + 2 * WORDSIZE / 4; } Idx[2] = Pos[2] = mm_load((xint*)ary[0]);
 	for(i=0;i<WORDSIZE/4;i++){ ary[0][i] = i + 3 * WORDSIZE / 4; } Idx[3] = Pos[3] = mm_load((xint*)ary[0]);
 	STEP = 32;
@@ -3092,7 +3092,7 @@ static inline u4i banded_striped_epi8_seqalign_row_max(b1i *us, int *ubegs, u4i 
 			max[1] = mm_max_epi16(max[1], scr[1]);
 		}
 		{
-			xi = mm_set1_epi32(x << 8);
+			xi = mm_set1_epi32(i << 8);
 			Pos[0] = mm_add_epi32(Pos[0], xi);
 			Pos[1] = mm_add_epi32(Pos[1], xi);
 			Pos[2] = mm_add_epi32(Pos[2], xi);
@@ -3134,6 +3134,12 @@ static inline u4i banded_striped_epi8_seqalign_row_max(b1i *us, int *ubegs, u4i 
 		}
 	}
 	x = i * W + j;
+#if DEBUG
+	if(x == W * WORDSIZE){
+		fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+		abort();
+	}
+#endif
 	if(0){
 		int rs[WORDSIZE];
 		mm_store(((xint*)rs) + 0, Scr[0]);
