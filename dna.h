@@ -668,6 +668,24 @@ static inline void seq2basebank(BaseBank *bnk, char *seq, u8i len){
 	}
 }
 
+static inline void bitseq2basebank(BaseBank *bnk, u1i *seq, u8i len){
+	u8i idx1, i, c;
+	u1i idx2;
+	encap_basebank(bnk, len);
+	idx1 = bnk->size >> 5;
+	idx2 = ((bnk->size) & 0x1FU) << 1;
+	bnk->size += len;
+	if(idx2 == 0) bnk->bits[idx1] = 0;
+	for(i=0;i<len;i++){
+		c = seq[i];
+		bnk->bits[idx1] |= c << (62 - idx2);
+		idx2 = (idx2 + 2) & 0x3F;
+		if(idx2 == 0){
+			bnk->bits[++idx1] = 0;
+		}
+	}
+}
+
 #define fwdseq2basebank(bnk, seq, len) seq2basebank(bnk, seq, len)
 
 static inline void revseq2basebank(BaseBank *bnk, char *seq, u8i len){
@@ -775,6 +793,21 @@ static inline void print_seq_basebank(BaseBank *bnk, u8i off, u8i len, FILE *out
 	}
 }
 
+static inline void print_bitseq_basebank(u1i *seqs, u8i len, FILE *out){
+	u8i i, b, e;
+	char buf[101];
+	for(b=0;b<len;){
+		e = num_min(b + 100, len);
+		for(i=b;i<e;i++){
+			buf[i - b] = bit_base_table[seqs[i]];
+		}
+		buf[e - b] = '\0';
+		fputs(buf, out);
+		//fputc('\n', out);
+		b = e;
+	}
+}
+
 static inline void print_lines_basebank(BaseBank *bnk, u8i off, u8i len, FILE *out, int linewidth){
 	u8i i, b, e;
 	char *buf;
@@ -797,6 +830,11 @@ static inline void print_lines_basebank(BaseBank *bnk, u8i off, u8i len, FILE *o
 
 static inline void println_seq_basebank(BaseBank *bnk, u8i off, u8i len, FILE *out){
 	print_seq_basebank(bnk, off, len, out);
+	fputc('\n', out);
+}
+
+static inline void println_bitseq_basebank(u1i *seqs, u8i len, FILE *out){
+	print_bitseq_basebank(seqs, len, out);
 	fputc('\n', out);
 }
 
