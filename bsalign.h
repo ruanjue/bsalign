@@ -1172,19 +1172,22 @@ static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1
 static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq, u4i qlen, u1i *tseq, u4i tlen, b1v *mempool, u4v *cigars, int verbose){
 	seqalign_result_t RS, RS2;
 	u8i *maps;
-	u4i i, kmap, mode, ml, qb, qe, tb, te, khf;
+	u4i i, kmap, cmin, mode, ml, qb, qe, tb, te, khf;
 	// kmer mapping
 	kmap = 0;
 	maps = NULL;
+	if(ksz > 15) ksz = 15;
 	clear_b1v(mempool);
 //#define LOCAL_DEBUG
 	do {
+		cmin = num_min(qlen, tlen) * 0.05;
+		cmin = num_min(cmin, 2 * ksz);
 		typedef struct { u4i kflg:1, kmer:30, kdir:1, koff; } _tmp_kmer_t;
 		typedef struct { _tmp_kmer_t kmers[2]; } _tmp_khit_t;
 		_tmp_kmer_t *kmers, *k;
 		_tmp_khit_t *khits, *h;
 		u4i flg, b, e, m, xlen, dir, kvals[2], kmk, sft, kcnt, *lisx[2];
-		int tot, mean, median, delta, *xoffs;
+		int tot, mean, median, delta, var, *xoffs;
 		u1i *xseq;
 		kmk = MAX_U4 >> ((16 - ksz) << 1);
 		sft = (ksz - 1) << 1;
@@ -1236,7 +1239,7 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 		}
 		kcnt = xlen / 2;
 		khits = (_tmp_khit_t*)kmers;
-		if(kcnt == 0) break;
+		if(kcnt * ksz < cmin) break;
 		encap_b1v(mempool, kcnt * sizeof(_tmp_khit_t) + 2 * kcnt * sizeof(u4i));
 		khits = (_tmp_khit_t*)(mempool->buffer + mempool->size);
 		lisx[0] = (u4i*)(khits + kcnt);
@@ -1288,17 +1291,9 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 			e = h->kmers[1].koff;
 			m = lisx[1][m];
 		}
-		if(b < UInt(num_min(qlen, tlen) * 0.05)){
+		if(b < cmin){
 			break;
 		}
-		for(b=i=0;i<kcnt;i++){
-			if(khits[i].kmers[0].kflg == 0) continue;
-			if(b < i){
-				khits[b] = khits[i];
-			}
-			b ++;
-		}
-		kcnt = b;
 #ifdef LOCAL_DEBUG
 		for(i=1;i<kcnt;i++){
 			if(khits[i].kmers[0].koff >= qlen){
@@ -1311,31 +1306,65 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 			}
 		}
 #endif
-		// filter bad ends
-		b = 0; e = kcnt;
+		// filter bad kmer-matching
 		xoffs = (int*)lisx[0];
-		while(b < e){
-			tot = 0;
-			for(i=b;i<e;i++){
+		while(1){
+			tot = e = 0;
+			for(i=0;i<kcnt;i++){
+				if(khits[i].kmers[0].kflg == 0) continue;
 				delta = Int(khits[i].kmers[0].koff) - Int(khits[i].kmers[1].koff);
 				tot += delta;
-				xoffs[i-b] = delta;
+				xoffs[e++] = delta;
 			}
-			mean = tot / Int(e - b);
-			median = quick_median_array(xoffs, e - b, int, num_cmpgt(a, b));
-			if(mean - median <= Int(num_abs(mean) * 0.05)){
-				break;
+			if(e * ksz < cmin) break;
+			mean = tot / Int(e);
+			median = quick_median_array(xoffs, e, int, num_cmpgt(a, b));
+#ifdef LOCAL_DEBUG
+			void my_print_khits(){
+				u4i i, j, off;
+				off = 0;
+				for(i=j=0;i<kcnt;i++){
+					if(khits[i].kmers[0].kflg == 0) continue;
+					fprintf(stderr, "KHITS[%d]\t%d\t%d\t%d\t%d\n", j, khits[i].kmers[0].koff, khits[i].kmers[1].koff, khits[i].kmers[0].koff - off, Int(khits[i].kmers[0].koff) - Int(khits[i].kmers[1].koff));
+					off = khits[i].kmers[0].koff;
+					j ++;
+				}
+				fprintf(stderr, "--- END KHITS ---\n");
 			}
-			if(num_diff(Int(khits[b].kmers[0].koff) - Int(khits[b].kmers[1].koff), median) > num_diff(Int(khits[e-1].kmers[0].koff) - Int(khits[e-1].kmers[1].koff), median)){
-				b ++;
-			} else {
-				e --;
+			my_print_khits();
+#endif
+			var = num_abs(median - mean) * 3;
+			var = num_max(var, 50);
+#ifdef LOCAL_DEBUG
+			fprintf(stderr, "Filter VAR: %d\n", var);
+#endif
+			for(i=b=0;i<kcnt;i++){
+				if(khits[i].kmers[0].kflg == 0) continue;
+				delta = Int(khits[i].kmers[0].koff) - Int(khits[i].kmers[1].koff);
+#ifdef LOCAL_DEBUG
+				fprintf(stderr, "KHITS\t%d\t%d\t%d\t%d\n", khits[i].kmers[0].koff, khits[i].kmers[1].koff, delta, num_abs(delta - mean));
+#endif
+				if(num_abs(delta - mean) > var){
+					khits[i].kmers[0].kflg = 0;
+					b ++;
+				}
 			}
+#ifdef LOCAL_DEBUG
+			fprintf(stderr, "KHITS STAT: num=%d mean=%d median=%d filter=%d\n", e, mean, median, b);
+#endif
+			if(b == 0) break;
 		}
-		kcnt = e;
+		for(b=i=0;i<kcnt;i++){
+			if(khits[i].kmers[0].kflg == 0) continue;
+			if(b < i){
+				khits[b] = khits[i];
+			}
+			b ++;
+		}
+		kcnt = b;
 		m = 0;
 		e = 0;
-		for(i=b;i<kcnt;i++){
+		for(i=0;i<kcnt;i++){
 			h = khits + i;
 			if(h->kmers[1].koff >= e + ksz){
 				m += ksz;
@@ -1344,11 +1373,10 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 			}
 			e = h->kmers[1].koff + ksz;
 		}
-		if(m < UInt(num_min(qlen, tlen) * 0.05)){
+		if(m < cmin){
 			break;
 		}
-		memmove(khits, khits + b, (kcnt - b) * sizeof(_tmp_khit_t));
-		kmap = kcnt - b;
+		kmap = kcnt;
 		maps = (u8i*)khits;
 		// convert khits to u8i
 #ifdef LOCAL_DEBUG
@@ -1399,6 +1427,9 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 			te = tlen;
 			mode = SEQALIGN_MODE_EXTEND;
 		} else {
+#ifdef LOCAL_DEBUG
+			fprintf(stderr, "[KHIT] %d\t%d\n", Int(maps[i] >> 32), Int(maps[i]));
+#endif
 			qe = (maps[i] >> 32) + (ksz / 2);
 			te = maps[i] + (ksz / 2);
 			ml ++;
@@ -3565,7 +3596,7 @@ static inline u4i banded_striped_epi8_seqalign_piecex_backcal(u1i *qseq, u1i *ts
 			t = gapo1 + (Hs[2] >> 4) * gape1;
 			if(Hs[0] + t == Hs[1]){
 				cg = _push_cigar_bsalign(cigars, cg, SEQALIGN_BT_D, Hs[2] >> 4);
-				rs->ins += Hs[2] >> 4;
+				rs->del += Hs[2] >> 4;
 				rs->aln += Hs[2] >> 4;
 				Hs[1] = Hs[0];
 				Hs[2] = 0;
