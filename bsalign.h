@@ -623,7 +623,7 @@ static inline void striped_seqedit_row_movx(u8i *us[2][2], u4i W, u4i movx, int 
 	u8i *p1, *p2, *p3, *p4, MASK;
 	u4i i, mov, div, cyc;
 	if(seqalign_mode_type(mode) == SEQALIGN_MODE_OVERLAP){
-		//sbeg[0] = 0;
+		sbeg[0] = 0;
 		memcpy(us[0][0], us[1][0], W * sizeof(u8i));
 		memcpy(us[0][1], us[1][1], W * sizeof(u8i));
 		return;
@@ -748,9 +748,9 @@ static inline void striped_seqedit_row_cal(u4i rbeg, u8i *us[2][2], u8i *hs, u8i
 	while(running){ // SWAT
 		v1 <<= 1;
 		v2 <<= 1;
-		//if(seqalign_mode_type(mode) != SEQALIGN_MODE_OVERLAP){
+		if(seqalign_mode_type(mode) != SEQALIGN_MODE_OVERLAP){
 			v2 |= 1;
-		//}
+		}
 		for(i=0;i<W;i++){
 			s  = qprof[(rbeg + i) * 4 + base];
 			h2 = hs[i];
@@ -1104,7 +1104,7 @@ static inline seqalign_result_t striped_seqedit_pairwise(u1i *qseq, u4i qlen, u1
 			int vals[2][2] = {{0, 1}, {-1, 2}};
 			int j, b1, b2, b3, b4, u, u2, v, v2, score, error;
 			score = sbeg;
-			v2    = 1;
+			v2    = seqalign_mode_type(mode) == SEQALIGN_MODE_OVERLAP? 0 : 1;
 			error = 0;
 			if(verbose > 1){
 				fprintf(stdout, "[%04d:%c] rbeg=%d\tmov=%d\t", i, "ACGTN"[tseq[i]], rbeg[1], movx);
