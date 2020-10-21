@@ -132,11 +132,10 @@ static inline u4i _zlib_raw_deflate_all(u1i *dst, u4i dlen, u1i *src, u4i slen, 
 	return ret;
 }
 
-static inline u4i _pgzf_deflate(u1v *dst, u1v *src, int level){
+static inline u4i _pgzf_deflate_core(u1v *dst, u1v *src, int level){
 	u4i z_size;
 	uLong crc;
 	clear_u1v(dst);
-	if(src->size == 0 || src->size >= MAX_U4) return 0;
 	z_size = compressBound(src->size);
 	encap_u1v(dst, z_size + PGZF_HEAD_SIZE + PGZF_TAIL_SIZE);
 	z_size = _zlib_raw_deflate_all(dst->buffer + PGZF_HEAD_SIZE, z_size, src->buffer, src->size, level);
@@ -146,6 +145,11 @@ static inline u4i _pgzf_deflate(u1v *dst, u1v *src, int level){
 	_gen_pgzf_tailer(dst->buffer + PGZF_HEAD_SIZE + z_size, crc, src->size);
 	dst->size = PGZF_HEAD_SIZE + z_size + PGZF_TAIL_SIZE;
 	return dst->size;
+}
+
+static inline u4i _pgzf_deflate(u1v *dst, u1v *src, int level){
+	if(src->size == 0 || src->size >= MAX_U4) return 0;
+	return _pgzf_deflate_core(dst, src, level);
 }
 
 static inline int _read_pgzf_header(FILE *in, u1v *src, u4i *hoff, u4i *zsval, u8i *zxval){
@@ -600,6 +604,17 @@ static inline void _end_pgzf_writer(PGZF *pz){
 		}
 		widx ++;
 	}
+	if(pz->xsize == 0){
+		thread_beg_operate(pgz, 0);
+		_pgzf_deflate_core(pgz->dst, pgz->src, pgz->level);
+		{
+			pz->tot_out += pgz->dst->size;
+			push_u8v(pz->boffs, pz->tot_out);
+			fwrite(pgz->dst->buffer, 1, pgz->dst->size, pz->file);
+			clear_u1v(pgz->dst);
+			clear_u1v(pgz->src);
+		}
+	}
 	thread_export(pgz, pz);
 }
 
@@ -829,8 +844,13 @@ static inline int close_pgzf4filereader(void *obj){
 static inline size_t write_pgzf4filewriter(void *obj, void *dat, size_t len){ return write_pgzf((PGZF*)obj, dat, len); }
 static inline void close_pgzf4filewriter(void *obj){
 	PGZF *pz;
+	FILE *file;
 	pz = (PGZF*)obj;
-	return close_pgzf(pz);
+	file = pz->file;
+	close_pgzf(pz);
+	if(file != stdout){
+		fclose(file);
+	}
 }
 
 static inline ssize_t pgzf_io_read(void *obj, char *buffer, size_t size){
