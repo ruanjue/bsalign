@@ -3393,4 +3393,72 @@ static inline u4i remsa_bspoa(BSPOA *g, BSPOA *lg){
 	return ret;
 }
 
+static inline int revise_seq_joint_point(u4v *cigars, int *qe, int *te){
+	u4i i, op, ln, max;
+	int qq, q, tt, t;
+	q = t = 0;
+	qq = tt = 0;
+	max = 0;
+	for(i=1;i<=cigars->size;i++){
+		op = cigars->buffer[cigars->size - i] & 0xF;
+		ln = cigars->buffer[cigars->size - i] >> 4;
+		if(op == 0){
+			if(ln > max){
+				qq = q; tt = t;
+				max = ln;
+			}
+			q += ln;
+			t += ln;
+		} else if(op == 1){
+			q += ln;
+		} else {
+			t += ln;
+		}
+	}
+	*qe -= qq;
+	*te -= tt;
+	return 1;
+}
+
+// ret[0]: revised end of seq1
+// ret[1]  revised beg of seq2
+static inline seqalign_result_t cat_cns_seqs(int ret[2], u1v *seq1, u1v *seq2, int overlap, b1v *mempool, u4v *cigars, int M, int X, int O, int E){
+	seqalign_result_t RS;
+	b1i matrix[16];
+	int qb, qe, tb, te, ol, maxl;
+	if(seq1->size == 0 || seq2->size == 0){
+		ZEROS(&RS);
+		ret[0] = seq1->size;
+		ret[1] = 0;
+		return RS;
+	}
+	qb = 0; qe = seq1->size;
+	tb = 0; te = seq2->size;
+	if(qe > overlap) qb = qe - overlap;
+	if(te > overlap) te = overlap;
+	ol = num_min(qe - qb, te - tb);
+	banded_striped_epi8_seqalign_set_score_matrix(matrix, M, X);
+	RS = banded_striped_epi8_seqalign_pairwise(seq1->buffer + qb, qe - qb, seq2->buffer + tb, te - tb, mempool, cigars, SEQALIGN_MODE_OVERLAP, 0, matrix, O, E, 0, 0, 0);
+	if(RS.aln < Int(0.5 * overlap) || RS.mat < Int(RS.aln * 0.9)){
+		// full length alignment
+		maxl = num_min(seq1->size, seq2->size);
+		maxl = num_min(maxl, overlap * 4);
+		qb = 0; qe = seq1->size;
+		tb = 0; te = seq2->size;
+		if(qe > maxl) qb = qe - maxl;
+		if(te > maxl) te = maxl;
+		ol = num_min(qe - qb, te - tb);
+		RS = banded_striped_epi8_seqalign_pairwise(seq1->buffer + qb, qe - qb, seq2->buffer + tb, te - tb, mempool, cigars, SEQALIGN_MODE_OVERLAP, 0, matrix, O, E, 0, 0, 0);
+	}
+	RS.qb += qb;
+	RS.qe += qb;
+	RS.tb += tb;
+	RS.te += tb;
+	ret[0] = RS.qe;
+	ret[1] = RS.te;
+	revise_seq_joint_point(cigars, ret + 0, ret + 1);
+	return RS;
+}
+
+
 #endif
