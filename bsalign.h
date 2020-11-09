@@ -562,11 +562,11 @@ static inline u4i seqalign_cigar2alnstr(u1i *qseq, u1i *tseq, seqalign_result_t 
 	return z;
 }
 
-static inline void seqalign_cigar2alnstr_print(char *qtag, u1i *qseq, char *ttag, u1i *tseq, seqalign_result_t *rs, u4v *cigars, FILE *out){
+static inline void seqalign_cigar2alnstr_print(char *qtag, u1i *qseq, u4i qlen, char *ttag, u1i *tseq, u4i tlen,seqalign_result_t *rs, u4v *cigars, FILE *out){
 	char *alnstr[3];
 	alnstr[0] = alnstr[1] = alnstr[2] = NULL;
 	seqalign_cigar2alnstr(qseq, tseq, rs, cigars, alnstr, 0);
-	fprintf(out, "%s\t%d\t%d\t%s\t%d\t%d\t%d\t%0.3f\t%d\t%d\t%d\t%d\n", qtag, rs->qb, rs->qe, ttag, rs->tb, rs->te, rs->score, 1.0 * rs->mat / num_max(rs->aln, 1), rs->mat, rs->mis, rs->ins, rs->del);
+	fprintf(out, "%s\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%0.3f\t%d\t%d\t%d\t%d\n", qtag, qlen, rs->qb, rs->qe, ttag, tlen, rs->tb, rs->te, rs->score, 1.0 * rs->mat / num_max(rs->aln, 1), rs->mat, rs->mis, rs->ins, rs->del);
 	fprintf(out, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
 	free(alnstr[0]);
 	free(alnstr[1]);
