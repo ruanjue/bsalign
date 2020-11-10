@@ -793,7 +793,7 @@ static inline void print_seq_basebank(BaseBank *bnk, u8i off, u8i len, FILE *out
 	}
 }
 
-static inline void print_bitseq_basebank(u1i *seqs, u8i len, FILE *out){
+static inline void print_bitseq_basebank(u1i *seqs, u8i len, int perline, FILE *out){
 	u8i i, b, e;
 	char buf[101];
 	for(b=0;b<len;){
@@ -803,7 +803,7 @@ static inline void print_bitseq_basebank(u1i *seqs, u8i len, FILE *out){
 		}
 		buf[e - b] = '\0';
 		fputs(buf, out);
-		//fputc('\n', out);
+		if(perline) fputc('\n', out);
 		b = e;
 	}
 }
@@ -834,8 +834,7 @@ static inline void println_seq_basebank(BaseBank *bnk, u8i off, u8i len, FILE *o
 }
 
 static inline void println_bitseq_basebank(u1i *seqs, u8i len, FILE *out){
-	print_bitseq_basebank(seqs, len, out);
-	fputc('\n', out);
+	print_bitseq_basebank(seqs, len, 1, out);
 }
 
 #define println_fwdseq_basebank(bnk, off, len, out) println_seq_basebank(bnk, off, len, out)
