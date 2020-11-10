@@ -16,6 +16,7 @@ int usage(){
 	" align       Pairwise alignment implemented by 8-bit encoded Banded Striped SIMD\n"
 	" edit        Pairwise alignment using edit distance implemented by 2-bit encoded banded Striped algorithm\n"
 	" poa         Multiple alignment implemented by 8-bit encoded Banded Striped SIMD Partial Order Alignment\n"
+	" cat         Concatenate pieces of seqs into one seq by overlaping\n"
 	"Tips:\n"
 	"# To invoke affine gap cost pairwise/multiple alignment\n"
 	"  -M 2 -X 6 -O 3 -E 2 -Q 0 -P 0\n"
@@ -94,6 +95,20 @@ int usage_poa(){
 	" tunes psub,pins,pdel,piex,pdex, hins, hdel\n"
 	"# Treats with reads having large offsets with each other in multiple alignment\n"
 	" set '-G trigger=0' to disable banded alignment, will be slower\n"
+	);
+	return 1;
+}
+
+int usage_cat(){
+	fprintf(stdout,
+	"Usage: bsalign cat [option] <input fasta/q.gz file>\n"
+	" -o <string> Consensus fasta file, [NULL]\n"
+	" -W <int>    Overlap size, [1024]\n"
+	"             You can specify individual overlap by add 'overlap=2048' to its seq header\n"
+	" -M <string> Score for match for poa and local realignment [2,1]\n"
+	" -X <string> Penalty for mismatch, [6,2]\n"
+	" -O <string> Penalty for gap open, [3,0]\n"
+	" -E <string> Penalty for gap extension, [2,1]\n"
 	);
 	return 1;
 }
@@ -505,6 +520,96 @@ int main_poa(int argc, char **argv){
 	return 0;
 }
 
+int main_cat(int argc, char **argv){
+	FileReader *fr;
+	FILE *out;
+	BioSequence *seq;
+	seqalign_result_t RS;
+	u4v *cigars;
+	b1v *mempool;
+	u1v *cns, *ctg;
+	char *str, *outf;
+	int M, X, O, E, W, ol, verbose, c, joints[2];
+	M = 2; X = -6; O = -3; E = -2; W = 1024;
+	verbose = 0; outf = NULL;
+	while((c = getopt(argc, argv, "hvW:M:X:O:E:")) != -1){
+		switch(c){
+			case 'v': verbose ++; break;
+			case 'o': outf = optarg; break;
+			case 'W': W = atoi(optarg); break;
+			case 'M': M = atoi(optarg); break;
+			case 'X': X = atoi(optarg); break;
+			case 'O': O = atoi(optarg); break;
+			case 'E': E = atoi(optarg); break;
+			case 'h':
+			default: return usage_cat();
+		}
+	}
+	if(optind < argc){
+		fr = open_all_filereader(argc - optind, argv + optind, 0);
+	} else {
+		fr = open_filereader(NULL, 0); // STDIN
+	}
+	if(outf){
+		out = open_file_for_write(outf, NULL, 1);
+	} else {
+		out = stdout;
+	}
+	cns = init_u1v(1024);
+	ctg = init_u1v(1024);
+	cigars = init_u4v(32);
+	mempool = adv_init_b1v(1024, 0, 16, 0);
+	seq = init_biosequence();
+	while(readseq_filereader(fr, seq)){
+		clear_and_encap_u1v(ctg, seq->seq->size);
+		for(c=0;c<seq->seq->size;c++) ctg->buffer[c] = base_bit_table[(int)seq->seq->string[c]];
+		ctg->size = c;
+		if(seq->dsc->size && (str = strcasestr(seq->dsc->string, "overlap="))){
+			ol = atoi(str);
+		} else {
+			ol = W;
+		}
+		if(cns->size == 0){
+			append_u1v(cns, ctg);
+			if(verbose){
+				fprintf(stderr, "JOINT\t%d\t%d\t%d\t%d\n", 0, 0, Int(ctg->size), Int(ctg->size));
+				fflush(stderr);
+			}
+		} else {
+			RS = cat_cns_seqs(joints, cns, ctg, ol, mempool, cigars, M, X, O, E);
+			if(verbose){
+				seqalign_cigar2alnstr_print("CNS", cns->buffer, cns->size, seq->tag->string, ctg->buffer, ctg->size, &RS, cigars, stderr);
+				fprintf(stderr, "JOINT\t%d\t%d\t%d\t%d\n", Int(cns->size), joints[0], Int(ctg->size), Int(ctg->size) - joints[1]);
+				fflush(stderr);
+			}
+			cns->size = joints[0];
+			if(joints[1] < Int(ctg->size)){
+				if(RS.aln == 0 || (RS.aln < ol / 2 && RS.aln < 50) || RS.mat < RS.aln / 2){
+					push_u1v(cns, 4);
+					push_u1v(cns, 4);
+					push_u1v(cns, 4);
+					push_u1v(cns, 4);
+					push_u1v(cns, 4);
+					push_u1v(cns, 4);
+					joints[0] = cns->size;
+					joints[1] = 0;
+				}
+				append_array_u1v(cns, ctg->buffer + joints[1], ctg->size - joints[1]);
+			}
+		}
+	}
+	fprintf(out, ">cns len=%d\n", Int(cns->size));
+	println_bitseq_basebank(cns->buffer, cns->size, out);
+	free_biosequence(seq);
+	free_b1v(mempool);
+	free_u4v(cigars);
+	free_u1v(cns);
+	free_u1v(ctg);
+	close_file(out);
+	close_filereader(fr);
+	return 0;
+}
+
 int main(int argc, char **argv){
 	if(argc < 2){
 		return usage();
@@ -512,6 +617,7 @@ int main(int argc, char **argv){
 	if(strcasecmp("EDIT", argv[1]) == 0) return main_edit(argc - 1, argv + 1);
 	if(strcasecmp("ALIGN", argv[1]) == 0) return main_align(argc - 1, argv + 1);
 	if(strcasecmp("POA", argv[1]) == 0) return main_poa(argc - 1, argv + 1);
+	if(strcasecmp("CAT", argv[1]) == 0) return main_cat(argc - 1, argv + 1);
 	fprintf(stderr, " -- Unknown command '%s' -- \n", argv[0]);
 	return 1;
 }
