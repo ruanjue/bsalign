@@ -566,7 +566,7 @@ int main_cat(int argc, char **argv){
 		for(c=0;c<seq->seq->size;c++) ctg->buffer[c] = base_bit_table[(int)seq->seq->string[c]];
 		ctg->size = c;
 		if(seq->dsc->size && (str = strcasestr(seq->dsc->string, "overlap="))){
-			ol = atoi(str);
+			ol = atoi(str + 8);
 		} else {
 			ol = W;
 		}
