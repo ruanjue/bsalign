@@ -1933,9 +1933,14 @@ static inline int align_rd_bspoacore(BSPOA *g, u2i rid){
 			if(v->state == 0) continue;
 			if(e->node == BSPOA_TAIL_NODE){
 				dpalign_row_prepare_data(g, u->mmidx, &us, &es, &qs, &ubegs);
-				if(seqalign_mode_type(g->par->alnmode) == SEQALIGN_MODE_GLOBAL){
+				// If reads are not high similar, the final score of graph alignment will be negative
+				// but the HEAD->TAIL score is 0, we will always put new read on the graph without alignment
+				// so, I force add g->par->E * (unaligned length) to avoid the above disaster
+				//if(seqalign_mode_type(g->par->alnmode) == SEQALIGN_MODE_GLOBAL){
+				if(1){ // always true
 					maxoff = num_min(g->slen, u->rpos + g->bandwidth) - 1;
 					smax = banded_striped_epi8_seqalign_getscore(us, ubegs, g->bandwidth / WORDSIZE, maxoff - u->rpos);
+					smax += g->par->E * (g->slen - maxoff - 1);
 					if(smax > g->maxscr){
 						g->maxscr = smax;
 						g->maxidx = offset_bspoanodev(g->nodes, u);
