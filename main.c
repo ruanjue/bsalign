@@ -600,7 +600,7 @@ int main_cat(int argc, char **argv){
 		}
 	}
 	fprintf(out, ">cns len=%d\n", Int(cns->size));
-	println_bitseq_basebank(cns->buffer, cns->size, out);
+	println_bitseq_basebank(cns->buffer, cns->size, 1, out);
 	free_biosequence(seq);
 	free_b1v(mempool);
 	free_u4v(cigars);
