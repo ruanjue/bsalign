@@ -3125,7 +3125,7 @@ static inline u4i banded_striped_epi8_seqalign_row_max(b1i *us, int *ubegs, u4i 
 			max[1] = mm_max_epi16(max[1], scr[1]);
 		}
 		{
-			xi = mm_set1_epi32(i << 8);
+			xi = mm_set1_epi32(1 << 8);
 			Pos[0] = mm_add_epi32(Pos[0], xi);
 			Pos[1] = mm_add_epi32(Pos[1], xi);
 			Pos[2] = mm_add_epi32(Pos[2], xi);
