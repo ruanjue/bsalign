@@ -833,8 +833,8 @@ static inline void println_seq_basebank(BaseBank *bnk, u8i off, u8i len, FILE *o
 	fputc('\n', out);
 }
 
-static inline void println_bitseq_basebank(u1i *seqs, u8i len, FILE *out){
-	print_bitseq_basebank(seqs, len, 1, out);
+static inline void println_bitseq_basebank(u1i *seqs, u8i len, int perline, FILE *out){
+	print_bitseq_basebank(seqs, len, perline, out);
 }
 
 #define println_fwdseq_basebank(bnk, off, len, out) println_seq_basebank(bnk, off, len, out)
