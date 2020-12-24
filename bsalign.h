@@ -696,6 +696,7 @@ static inline void striped_seqedit_row_movx(u8i *us[2][2], u4i W, u4i movx, int 
 //  0(01)   1(01)  -1(10) =  0(00)  1(01)
 //  0(01)   1(01)   0(00) =  0(00)  0(00)
 //  0(01)   1(01)   1(01) =  0(00) -1(10)
+//  1(00)  -1(10)  -1(00) =  0(00)  1(00)
 //  1(00)  -1(10)   0(00) =  0(00)  0(00)
 //  1(00)  -1(10)   1(01) =  0(00) -1(10)
 //  1(00)   0(00)  -1(10) =  0(00)  1(01)
@@ -1585,6 +1586,7 @@ static inline void striped_epi2_seqedit_row_cal(u4i rbeg, b1i *us[2][2], b1i *hs
 		//  0(01)   1(01)  -1(10) =  0(00)
 		//  0(01)   1(01)   0(00) =  0(00)
 		//  0(01)   1(01)   1(01) =  0(00)
+		//  1(00)  -1(10)  -1(10) =  0(00)
 		//  1(00)  -1(10)   0(00) =  0(00)
 		//  1(00)  -1(10)   1(01) =  0(00)
 		//  1(00)   0(00)  -1(10) =  0(00)
@@ -3317,7 +3319,7 @@ static inline void banded_striped_epi8_seqalign_row_print(FILE *out, u1i *qseq, 
 		score = ubegs[0];
 		for(i=0;i<bandwidth;i++){
 			x = banded_striped_epi8_pos2idx(W << WORDSHIFT, i);
-			fprintf(out, "\t%d:%c%d:%d:%d", i + rbeg, "ACGTN-"[rbeg + i < qlen? qseq[rbeg + i] : 4], score + us[x], us[x], es[x]);
+			fprintf(out, "\t%d:%c%d:%d:%d", i + rbeg, "ACGTN-"[rbeg + i < qlen? qseq[rbeg + i] : 4], score + us[x], us[x], es? es[x] : 0);
 			score += us[x];
 		}
 	}
