@@ -257,6 +257,8 @@ static inline void recap_bitvec(BitVec *bitv, u8i new_cap){
 	bitv->n_cap = new_cap;
 }
 
+#define renew_bitvec(bitv, new_cap) recap_bitvec(bitv, new_cap)
+
 static inline void one2bitvec(BitVec *bitv){ encap_bitvec(bitv, 1); one_bitvec(bitv, bitv->n_bit); bitv->n_bit ++; }
 
 static inline void zero2bitvec(BitVec *bitv){ encap_bitvec(bitv, 1); zero_bitvec(bitv, bitv->n_bit); bitv->n_bit ++; }
