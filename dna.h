@@ -1233,6 +1233,23 @@ static inline void push_seqbank(SeqBank *sb, char *tag, int tag_len, char *seq, 
 	sb->nseq ++;
 }
 
+static inline void bitseqpush_seqbank(SeqBank *sb, char *tag, int tag_len, u1i *seq, u4i len){
+	char *ptr;
+	if(tag && tag_len){
+		ptr = malloc(tag_len + 1);
+		memcpy(ptr, tag, tag_len);
+		ptr[tag_len] = 0;
+	} else {
+		ptr = NULL;
+	}
+	push_cplist(sb->rdtags, ptr);
+	push_u8v(sb->rdoffs, sb->rdseqs->size);
+	bitseq2basebank(sb->rdseqs, seq, len);
+	push_u4v(sb->rdlens, len);
+	if(ptr) put_cuhash(sb->rdhash, (cuhash_t){ptr, sb->nseq});
+	sb->nseq ++;
+}
+
 static inline void fwdbitpush_seqbank(SeqBank *sb, char *tag, int tag_len, u8i *bits, u8i off, u4i len){
 	char *ptr;
 	if(tag && tag_len){
