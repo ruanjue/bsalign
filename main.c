@@ -38,6 +38,7 @@ int usage_align(){
 	" -E <int>    Penalty for gap extension, [2]\n"
 	" -Q <int>    Penalty for gap2 open, [0]\n"
 	" -P <int>    Penalty for gap2 extension, [0]\n"
+	" -L <int>    Line width for alignment output, [0]\n"
 	" -R <int>    Repeat times (for benchmarking) [1]\n"
 	" -v          Verbose\n"
 	"# To invoke linear gap cost pairwise alignment\n"
@@ -76,19 +77,22 @@ int usage_poa(){
 	" -Q <string> Penalty for gap2 open, [0,0]\n"
 	" -P <string> Penalty for gap2 extension, [0,0]\n"
 	" -G <string> misc parameters for POA, <tag>=<val>\n"
-	"             Defaults: refmode=0,refbonus=1,nrec=20,kmer=15,trigger=1,remsa=1,rma_win=5,qltlo=30,qlthi=35,\n"
+	"             Defaults: refmode=0,refbonus=1,nrec=20,kmer=15,trigger=1,remsa=2,rma_win=5,qltlo=30,qlthi=35,\n"
 	"                       psub=0.05,pins=0.05,pdel=0.10,piex=0.25,pdex=0.30,hins=0.10,hdel=0.20\n"
 	"              refmode: whether the first sequences is reference sequence, useful in polishing\n"
 	"              refbonus: base match score on reference will be M + refbonus\n"
 	"              nrec: every query read is aligning against previous <nrec> reads on graph, 0 to all the previous\n"
 	"              trigger: when <trigger> > 0 and <-W> < query length, genrates CNS per after <trigger> reads, and trigger banded alignment\n"
-	"              remsa: based on consensus sequence, invoke local realignment\n"
+	"              remsa=0: disable remsa\n"
+	"              remsa=1: based on consensus sequence, invoke local realignment of all reads\n"
+	"              remsa=2: based on consensus sequence, invoke local realignment for each low score region per read\n"
 	"              rma_win: min length of flinking high quality cns bases\n"
-	"              qltlo: trigger local remsa when cns quality <= qltlo\n"
+	"              qltlo: trigger local remsa(==1) when cns quality <= qltlo\n"
 	"              qlthi: high cns quality\n"
 	"              psub/pins/pdel/piex/pdex: for consensus, probs. of mis/ins/del/ins_ext/del_ext\n"
 	"              hins/hdel: probs of ins/del in homopolymer region\n"
 	" -L          Print MSA in 'one seq one line'\n"
+	" -C          Print MSA in colorful format\n"
 	" -R <int>    Repeat times (for benchmarking) [1]\n"
 	" -v          Verbose\n"
 	"# different sequencing error pattern\n"
@@ -246,14 +250,15 @@ int main_align(int argc, char **argv){
 	b1v *mempool;
 	b1i mtx[16];
 	char *alnstr[3], *str, *tok;
-	int c, mode, _W, W, repm, repn, verbose, strn;
+	int c, mode, _W, W, repm, repn, verbose, strn, line;
 	par  = DEFAULT_BSPOA_PAR;
 	mode = SEQALIGN_MODE_OVERLAP;
 	_W = 0;
 	par.M = 2; par.X = -6; par.O = -3; par.E = -2; par.Q = 0; par.P = 0;
 	repm = 1;
 	verbose = 0;
-	while((c = getopt(argc, argv, "hm:W:M:X:O:E:Q:P:R:v")) != -1){
+	line = 0;
+	while((c = getopt(argc, argv, "hm:W:M:X:O:E:Q:P:L:R:v")) != -1){
 		switch(c){
 			case 'm':
 			str = optarg;
@@ -274,6 +279,7 @@ int main_align(int argc, char **argv){
 			case 'E': par.E = - atoi(optarg); break;
 			case 'Q': par.Q = - atoi(optarg); break;
 			case 'P': par.P = - atoi(optarg); break;
+			case 'L': line = atoi(optarg); break;
 			case 'R': repm = atoi(optarg); break;
 			case 'v': verbose ++; break;
 			default: return usage_align();
@@ -333,7 +339,24 @@ int main_align(int argc, char **argv){
 				seqalign_cigar2alnstr(qseq->buffer, tseq->buffer, &rs, cigars, alnstr, strn);
 				fprintf(stdout, "%s\t%d\t+\t%d\t%d\t%s\t%d\t+\t%d\t%d\t", seqs->rdtags->buffer[0], Int(qseq->size), rs.qb, rs.qe, seqs->rdtags->buffer[1], Int(tseq->size), rs.tb, rs.te);
 				fprintf(stdout, "%d\t%.3f\t%d\t%d\t%d\t%d\n", rs.score, 1.0 * rs.mat / rs.aln, rs.mat, rs.mis, rs.ins, rs.del);
-				fprintf(stdout, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
+				if(line > 0){
+					int i, b, e, qn, tn;
+					char tmp;
+					qn = rs.qb;
+					tn = rs.tb;
+					for(b=0;b<strn;b+=100){
+						e = num_min(b + 100, strn);
+						for(i=b;i<e;i++){
+							if(alnstr[0][i] != '-') qn ++;
+							if(alnstr[1][i] != '-') tn ++;
+						}
+						tmp = alnstr[0][e]; alnstr[0][e] = 0; fprintf(stdout, "%s\t%d\n", alnstr[0] + b, qn); alnstr[0][e] = tmp;
+						tmp = alnstr[2][e]; alnstr[2][e] = 0; fprintf(stdout, "%s\n",     alnstr[2] + b); alnstr[2][e] = tmp;
+						tmp = alnstr[1][e]; alnstr[1][e] = 0; fprintf(stdout, "%s\t%d\n", alnstr[1] + b, tn); alnstr[1][e] = tmp;
+					}
+				} else {
+					fprintf(stdout, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
+				}
 				fflush(stdout);
 			}
 			clear_seqbank(seqs);
@@ -364,13 +387,14 @@ int main_poa(int argc, char **argv){
 	regex_t reg;
 	regmatch_t mats[3];
 	char *str, *tok, *cnsfn;
-	int c, repm, repn, mline, verbose;
+	int c, repm, repn, mline, colorful, verbose;
 	int msabeg, msaend, msacnt, rmabeg, rmaend;
 	par  = DEFAULT_BSPOA_PAR;
 	rpar = DEFAULT_BSPOA_PAR;
-	 par.ksz = 13; par.alnmode = SEQALIGN_MODE_OVERLAP;  par.M = 2;  par.X = -6; par.O = -3;  par.E = -2;  par.Q = 0;  par.P = 0;
-	rpar.ksz = 0; rpar.alnmode =  SEQALIGN_MODE_GLOBAL; rpar.M = 1; rpar.X = -2; rpar.O = 0; rpar.E = -1; rpar.Q = 0; rpar.P = 0;
+	 par.ksz = 13; par.alnmode = SEQALIGN_MODE_OVERLAP;  par.M = 2;  par.X = -6; par.O = -3;  par.E = -2;  par.Q = 0;  par.P = 0;  par.T = 20;
+	rpar.ksz = 0; rpar.alnmode =  SEQALIGN_MODE_GLOBAL; rpar.M = 1; rpar.X = -2; rpar.O = 0; rpar.E = -1; rpar.Q = 0; rpar.P = 0; rpar.T = 2;
 	mline = 1;
+	colorful = 0;
 	repm = 1;
 	verbose = 0;
 	msabeg = 0;
@@ -386,7 +410,7 @@ int main_poa(int argc, char **argv){
 		fprintf(stderr, " -- REGCOMP: %s --\n", regtag); fflush(stderr);
 		exit(1);
 	}
-	while((c = getopt(argc, argv, "hvo:m:W:M:X:O:E:Q:P:G:LT:R:")) != -1){
+	while((c = getopt(argc, argv, "hvo:m:W:M:X:O:E:Q:P:G:LCT:R:")) != -1){
 		switch(c){
 			case 'h': return usage_poa();
 			case 'v': verbose ++; break;
@@ -453,6 +477,7 @@ int main_poa(int argc, char **argv){
 					str += mats[0].rm_eo;
 				}
 			case 'L': mline = 0; break;
+			case 'C': colorful = 1; break;
 			case 'R': repm = atoi(optarg); break;
 			default: return usage_poa();
 		}
@@ -473,6 +498,9 @@ int main_poa(int argc, char **argv){
 	_DEBUG_LOG_ = verbose;
 	g  = init_bspoa(par);
 	lg = init_bspoa(rpar);
+#if DEBUG
+	include_debug_funs_bspoa(g);
+#endif
 	beg_bspoa(g);
 	while(readseq_filereader(fr, seq)){
 		if(seq->seq->size == 0) continue;
@@ -485,12 +513,16 @@ int main_poa(int argc, char **argv){
 	}
 	if(par.remsa){
 		int recnt;
-		for(recnt=0;recnt<par.remsa;recnt++){
+		for(recnt=0;recnt<1;recnt++){
 			if(_DEBUG_LOG_){
 				fprintf(stdout, "## TOBE MSA\n");
 				print_msa_sline_bspoa(g, stdout);
 			}
-			remsa_bspoa(g, lg);
+			if(par.remsa == 1){
+				remsa_bspoa(g, lg);
+			} else if(par.remsa == 2){
+				remsa_lsps_bspoa(g, &rpar);
+			}
 		}
 	}
 	if(rmaend >= rmabeg){
