@@ -2111,7 +2111,7 @@ static void banded_striped_epi8_seqalign_piecex_row_init(b1i *us, b1i *es, b1i *
 	}
 }
 
-static inline void banded_striped_epi8_seqalign_set_query_prof(u1i *qseq, u4i qlen, b1i *qprof, u4i bandwidth, b1i mtx[16]){
+static inline void banded_striped_epi8_seqalign_set_query_prof_native(u1i *qseq, u4i qlen, b1i *qprof, u4i bandwidth, b1i mtx[16]){
 	b1i *qp;
 	u4i xlen, x, pos, i, j, W, b;
 	W = bandwidth / WORDSIZE;
@@ -2130,6 +2130,63 @@ static inline void banded_striped_epi8_seqalign_set_query_prof(u1i *qseq, u4i ql
 				for(i=0;i<4;i++){
 					qp[i * WORDSIZE + j] = SEQALIGN_SCORE_EPI8_MIN;
 				}
+			}
+		}
+	}
+}
+
+static inline void banded_striped_epi8_seqalign_set_query_prof(u1i *qseq, u4i qlen, b1i *qprof, u4i bandwidth, b1i mtx[16]){
+	int W, xlen, x, y, z, pos, i, j, jb, je;
+	b1i c;
+	W = bandwidth / WORDSIZE;
+	xlen = num_max(qlen, bandwidth);
+	z = W * 4 * WORDSIZE - 1;
+	for(pos=0;pos<2*xlen;pos++){
+		for(i=0;i<4;i++){
+			if(pos < Int(qlen)){
+				c = mtx[(qseq[pos] << 2) + i];
+			} else {
+				c = SEQALIGN_SCORE_EPI8_MIN;
+			}
+			y = ((pos << 2) + i) * WORDSIZE;
+			jb = (pos - xlen + W - 1) / W;
+			jb = num_max(jb, 0);
+			je = pos / W;
+			je = num_min(je, WORDSIZE - 1);
+			for(j=jb;j<=je;j++){
+				//Formula: x = (((pos - (j * W)) << 2) + i) * WORDSIZE + j;
+				x = y - j * z;
+				qprof[x] = c;
+			}
+		}
+	}
+}
+
+// bonus -> non identitical adjacent base
+static inline void banded_striped_epi8_seqalign_set_query_prof_hpc(u1i *qseq, u4i qlen, b1i *qprof, u4i bandwidth, b1i mtx[16], b1i bonus){
+	int W, xlen, x, y, z, pos, i, j, jb, je, c;
+	W = bandwidth / WORDSIZE;
+	xlen = num_max(qlen, bandwidth);
+	z = W * 4 * WORDSIZE - 1;
+	for(pos=0;pos<2*xlen;pos++){
+		for(i=0;i<4;i++){
+			if(pos < Int(qlen)){
+				c = mtx[(qseq[pos] << 2) + i];
+				if(pos + 1 < Int(qlen) && qseq[pos] != qseq[pos + 1]){
+					c += bonus;
+				}
+			} else {
+				c = SEQALIGN_SCORE_EPI8_MIN;
+			}
+			y = ((pos << 2) + i) * WORDSIZE;
+			jb = (pos - xlen + W - 1) / W;
+			jb = num_max(jb, 0);
+			je = pos / W;
+			je = num_min(je, WORDSIZE - 1);
+			for(j=jb;j<=je;j++){
+				//Formula: x = (((pos - (j * W)) << 2) + i) * WORDSIZE + j;
+				x = y - j * z;
+				qprof[x] = c;
 			}
 		}
 	}
