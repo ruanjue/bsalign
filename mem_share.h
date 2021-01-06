@@ -101,6 +101,8 @@ typedef long double f8i;
 #define _QUOTE_STR(x) #x
 #define TOSTR(x) _QUOTE_STR(x)
 
+#define TOTYPE(v, type) ((type)(v))
+
 #define uc(ch) (((ch) >= 'a' && (ch) <= 'z')? (ch) + 'A' - 'a' : (ch))
 #define lc(ch) (((ch) >= 'A' && (ch) <= 'Z')? (ch) + 'a' - 'A' : (ch))
 
