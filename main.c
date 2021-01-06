@@ -70,25 +70,25 @@ int usage_poa(){
 	" -o <string> Consensus fasta file, [NULL]\n"
 	" -m <string> Align mode: global/extend/overlap, [global]\n"
 	" -W <int>    Bandwidth, 0: full length, [128]\n"
-	" -M <string> Score for match for poa and local realignment [2,1]\n"
-	" -X <string> Penalty for mismatch, [6,2]\n"
-	" -O <string> Penalty for gap open, [3,0]\n"
-	" -E <string> Penalty for gap extension, [2,1]\n"
+	" -M <string> Score for match for poa and local realignment [2,2]\n"
+	" -X <string> Penalty for mismatch, [6,6]\n"
+	" -O <string> Penalty for gap open, [3,3]\n"
+	" -E <string> Penalty for gap extension, [2,2]\n"
 	" -Q <string> Penalty for gap2 open, [0,0]\n"
 	" -P <string> Penalty for gap2 extension, [0,0]\n"
 	" -G <string> misc parameters for POA, <tag>=<val>\n"
-	"             Defaults: refmode=0,refbonus=1,nrec=20,kmer=15,trigger=1,remsa=2,rma_win=5,qltlo=30,qlthi=35,\n"
-	"                       psub=0.05,pins=0.05,pdel=0.10,piex=0.25,pdex=0.30,hins=0.10,hdel=0.20\n"
+	"             Defaults: refmode=0,refbonus=1,nrec=20,kmer=15,trigger=1,realn=4,remsa=0,rma_win=5,qltlo=20,qlthi=60,\n"
+	"                       psub=0.10,pins=0.10,pdel=0.15,piex=0.15,pdex=0.20,hins=0.20,hdel=0.40\n"
 	"              refmode: whether the first sequences is reference sequence, useful in polishing\n"
 	"              refbonus: base match score on reference will be M + refbonus\n"
 	"              nrec: every query read is aligning against previous <nrec> reads on graph, 0 to all the previous\n"
 	"              trigger: when <trigger> > 0 and <-W> < query length, genrates CNS per after <trigger> reads, and trigger banded alignment\n"
+	"              realn: rounds of realignment\n"
 	"              remsa=0: disable remsa\n"
-	"              remsa=1: based on consensus sequence, invoke local realignment of all reads\n"
-	"              remsa=2: based on consensus sequence, invoke local realignment for each low score region per read\n"
+	"              remsa=1: based on consensus sequence, invoke local realignment for each low score region per read\n"
 	"              rma_win: min length of flinking high quality cns bases\n"
-	"              qltlo: trigger local remsa(==1) when cns quality <= qltlo\n"
-	"              qlthi: high cns quality\n"
+	"              qltlo: cutoff of high alt base quality\n"
+	"              qlthi: cutoff of high cns base quality\n"
 	"              psub/pins/pdel/piex/pdex: for consensus, probs. of mis/ins/del/ins_ext/del_ext\n"
 	"              hins/hdel: probs of ins/del in homopolymer region\n"
 	" -L          Print MSA in 'one seq one line'\n"
@@ -350,9 +350,9 @@ int main_align(int argc, char **argv){
 							if(alnstr[0][i] != '-') qn ++;
 							if(alnstr[1][i] != '-') tn ++;
 						}
-						tmp = alnstr[0][e]; alnstr[0][e] = 0; fprintf(stdout, "%s\t%d\n", alnstr[0] + b, qn); alnstr[0][e] = tmp;
+						tmp = alnstr[0][e]; alnstr[0][e] = 0; fprintf(stdout, "%s\tQ[%d]\n", alnstr[0] + b, qn); alnstr[0][e] = tmp;
 						tmp = alnstr[2][e]; alnstr[2][e] = 0; fprintf(stdout, "%s\n",     alnstr[2] + b); alnstr[2][e] = tmp;
-						tmp = alnstr[1][e]; alnstr[1][e] = 0; fprintf(stdout, "%s\t%d\n", alnstr[1] + b, tn); alnstr[1][e] = tmp;
+						tmp = alnstr[1][e]; alnstr[1][e] = 0; fprintf(stdout, "%s\tT[%d]\n", alnstr[1] + b, tn); alnstr[1][e] = tmp;
 					}
 				} else {
 					fprintf(stdout, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
@@ -380,19 +380,20 @@ int main_align(int argc, char **argv){
 int main_poa(int argc, char **argv){
 	FileReader *fr;
 	FILE *out;
-	SeqBank *seqs;
 	BioSequence *seq;
 	BSPOAPar par, rpar;
-	BSPOA *g, *lg;
+	BSPOA *g;
 	regex_t reg;
 	regmatch_t mats[3];
 	char *str, *tok, *cnsfn;
-	int c, repm, repn, mline, colorful, verbose;
+	int c, repm, repn, mline, layf, colorful, verbose;
 	int msabeg, msaend, msacnt, rmabeg, rmaend;
 	par  = DEFAULT_BSPOA_PAR;
 	rpar = DEFAULT_BSPOA_PAR;
-	 par.ksz = 13; par.alnmode = SEQALIGN_MODE_OVERLAP;  par.M = 2;  par.X = -6; par.O = -3;  par.E = -2;  par.Q = 0;  par.P = 0;  par.T = 20;
-	rpar.ksz = 0; rpar.alnmode =  SEQALIGN_MODE_GLOBAL; rpar.M = 1; rpar.X = -2; rpar.O = 0; rpar.E = -1; rpar.Q = 0; rpar.P = 0; rpar.T = 2;
+	 par.ksz = 13; par.alnmode = SEQALIGN_MODE_OVERLAP;  par.M = 2;  par.X = -6;  par.O = -3;  par.E = -2;  par.Q = 0;  par.P = 0;  par.T = 20;
+	rpar.ksz = 0; rpar.alnmode =  SEQALIGN_MODE_GLOBAL; rpar.M = 1; rpar.X = -2; rpar.O =  0; rpar.E = -1; rpar.Q = 0; rpar.P = 0; rpar.T = 2;
+	//rpar.ksz = 0; rpar.alnmode =  SEQALIGN_MODE_GLOBAL; rpar.M = 2; rpar.X = -6; rpar.O = -3; rpar.E = -2; rpar.Q = 0; rpar.P = 0; rpar.T =  2;
+	layf = 0;
 	mline = 1;
 	colorful = 0;
 	repm = 1;
@@ -450,6 +451,7 @@ int main_poa(int argc, char **argv){
 					else if(strncasecmp("trigger", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.bwtrigger = atof(str + mats[2].rm_so);
 					else if(strncasecmp("refmode", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.refmode = atoi(str + mats[2].rm_so);
 					else if(strncasecmp("refbonus", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.refbonus = atoi(str + mats[2].rm_so);
+					else if(strncasecmp("realn", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.realn = atoi(str + mats[2].rm_so);
 					else if(strncasecmp("remsa", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.remsa = atoi(str + mats[2].rm_so);
 					else if(strncasecmp("rma_win", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.rma_win = atoi(str + mats[2].rm_so);
 					else if(strncasecmp("qltlo", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.qltlo = atoi(str + mats[2].rm_so);
@@ -493,14 +495,12 @@ int main_poa(int argc, char **argv){
 	} else {
 		out = NULL;
 	}
-	seqs = init_seqbank();
-	seq = init_biosequence();
 	_DEBUG_LOG_ = verbose;
-	g  = init_bspoa(par);
-	lg = init_bspoa(rpar);
 #if DEBUG
-	include_debug_funs_bspoa(g);
+	include_debug_funs_bspoa(NULL);
 #endif
+	g  = init_bspoa(par);
+	seq = init_biosequence();
 	beg_bspoa(g);
 	while(readseq_filereader(fr, seq)){
 		if(seq->seq->size == 0) continue;
@@ -515,29 +515,30 @@ int main_poa(int argc, char **argv){
 		int recnt;
 		for(recnt=0;recnt<1;recnt++){
 			if(_DEBUG_LOG_){
-				fprintf(stdout, "## TOBE MSA\n");
-				print_msa_sline_bspoa(g, stdout);
+				print_msa_bspoa(g, "LSP", 0, 0, 0, 1, _DEBUG_LOGFILE_);
 			}
 			if(par.remsa == 1){
-				remsa_bspoa(g, lg);
-			} else if(par.remsa == 2){
 				remsa_lsps_bspoa(g, &rpar);
 			}
 		}
 	}
-	if(rmaend >= rmabeg){
-		local_remsa_bspoa(g, rmabeg, rmaend, NULL, NULL, NULL, NULL, NULL, lg);
-		print_msa_sline_bspoa(lg, stderr);
-	}
 	if(mline){
-		print_msa_mline_bspoa(g, stdout);
+		print_msa_bspoa(g, "MSA", 0, 0, 100, colorful, stdout);
 	} else {
-		print_msa_sline_bspoa(g, stdout);
+		print_msa_bspoa(g, "MSA", 0, 0,   0, colorful, stdout);
 	}
-	print_snp_bspoa(g, stdout);
 	if(out){
+		u4i i;
+		clear_string(g->strs); encap_string(g->strs, g->cns->size);
+		for(i=0;i<g->cns->size;i++) g->strs->string[i] = bit_base_table[g->cns->buffer[i]];
+		g->strs->string[i] = 0;
 		fprintf(out, ">cns_seq\n%s\n", g->strs->string);
 		close_file(out);
+	}
+	if(1){
+		denoising_msa_bspoa(g, g->par->qlthi, g->par->qltlo);
+		print_msa_bspoa(g, "CSA", 0, 0,   0, colorful, stdout);
+		print_snp_bspoa(g, stdout);
 	}
 	if(msaend >= msabeg){
 		FILE *out;
@@ -546,10 +547,8 @@ int main_poa(int argc, char **argv){
 		fclose(out);
 	}
 	free_bspoa(g);
-	free_bspoa(lg);
 	free_biosequence(seq);
 	close_filereader(fr);
-	free_seqbank(seqs);
 	return 0;
 }
 
