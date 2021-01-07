@@ -67,19 +67,18 @@ typedef struct {
 	int minlsp; // 3
 	float max_lsp_cov; // 0.3
 	int rma_win; // 5, min length of flinking high quality cns bases
-	int qltlo, qlthi; // 20, 60, trigger local remsa when cns quality <= qltlo
+	int qltlo, qlthi; // 15, 60, trigger local remsa when cns quality <= qltlo
 	float psub, pins, pdel, piex, pdex, hins, hdel; // 0.10, 0.10, 0.15, 0.15, 0.20, 0.20, 0.40
 } BSPOAPar;
 
-static const BSPOAPar DEFAULT_BSPOA_PAR = (BSPOAPar){0, SEQALIGN_MODE_OVERLAP, 4, 0, 20, 15, 1, 128, 64 * 1024, 2, -6, -3, -2, -8, -1, 20, 1, 3, 0.3, 5, 20, 60, 0.10, 0.10, 0.15, 0.15, 0.20, 0.20, 0.40};
+static const BSPOAPar DEFAULT_BSPOA_PAR = (BSPOAPar){0, SEQALIGN_MODE_OVERLAP, 4, 0, 20, 15, 1, 128, 64 * 1024, 2, -6, -3, -2, -8, -1, 20, 1, 3, 0.3, 5, 15, 60, 0.10, 0.10, 0.15, 0.15, 0.20, 0.20, 0.40};
 
 typedef struct {
 	u4i coff:29, bt:3;
 	float max;
 } bspoacns_t;
 
-#define BSPOA_QLT_MAX	60
-#define BSPOA_QLT_LOW	20
+#define BSPOA_QLT_MAX	90
 
 typedef struct {
 	u2i rid;
@@ -2860,7 +2859,7 @@ static inline long double cns_bspoa(BSPOA *g){
 	//bspoavar_t *var;
 	dp_t *dps[5], *dp[5], *lp;
 	long double ret, errs[5], errd, erre, p, log10;
-	u1i a, b, c, d, e, f, *r, *qs, *ts, *bs[10];
+	u1i a, b, c, lc, d, e, f, *r, *qs, *ts, *bs[10];
 	u4i nseq, mrow, mlen, cpos, rid, *rps, i, mpsize, cnt[3];
 	//u4i cnts[7], mpos;
 	//u1i *col;
@@ -2954,17 +2953,40 @@ static inline long double cns_bspoa(BSPOA *g){
 	for(i=0;i<10;i++){
 		memset(bs[i], 0, nseq);
 	}
+	lc = 4;
 	for(pos=0;pos<Int(mlen);pos++){
 		qs = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
 		c = qs[nseq];
-		errs[0] = dps[0][pos].sc[5];
-		errs[1] = dps[1][pos].sc[5];
-		errs[2] = dps[2][pos].sc[5];
-		errs[3] = dps[3][pos].sc[5];
-		errs[4] = dps[4][pos].sc[5];
-		erre = sum_log_nums(5, errs);
-		errd = dps[c][pos].sc[5];
-		erre = - (10 * log(1 - exp(errd - erre)) / log10);
+		if(1){
+			errs[0] = dps[0][pos].sc[5];
+			errs[1] = dps[1][pos].sc[5];
+			errs[2] = dps[2][pos].sc[5];
+			errs[3] = dps[3][pos].sc[5];
+			errs[4] = dps[4][pos].sc[5];
+			erre = sum_log_nums(5, errs);
+			errd = dps[c][pos].sc[5];
+			erre = logl(1 - expl(errd - erre));
+		} else {
+			erre = 0;
+			for(e=d=0;e<=4;e++){
+				if(e == c) continue;
+				errs[d++] = dps[e][pos].sc[lc];
+			}
+			erre = sum_log_nums(4, errs);
+			if(pos > 2090 && pos < 2094){
+				printf("[%d] lc=%d c=%d erre=%0.4Lf phred=%0.2LF\t", pos, lc, c, erre, - (10 * erre) / log10);
+				for(e=0;e<=4;e++){
+					printf("[%d]", e);
+					for(a=0;a<=5;a++){
+						printf("%0.4Lf,", dps[e][pos].sc[a]);
+					}
+					printf("\t");
+				}
+				printf("\n");
+			}
+		}
+		if(c < 4) lc = c;
+		erre = - (10 * (erre) / log10);
 		qs[nseq + 1] = (int)num_min(erre, BSPOA_QLT_MAX);
 		if(1){
 			a = (c + 1) % 5;
