@@ -2933,8 +2933,8 @@ static inline long double cns_bspoa(BSPOA *g){
 		}
 	}
 	pos = mlen - 1;
-	c = 0;
-	for(a=1;a<=4;a++){
+	c = 4;
+	for(a=0;a<4;a++){
 		if(dps[a][pos].sc[5] > dps[c][pos].sc[5]){
 			c = a;
 		}
