@@ -27,7 +27,7 @@
 
 typedef struct {
 	u2i rid;
-	u1i base:7, ref:1, aux:3, colorful:1, inuse:1, bonus:1, bless:1, rdc:1; // rdc: connect previous node on read
+	u1i base:7, ref:1, aux:2, colorful:1, inuse:1, bonus:1, bless:1, rdc:1, rdd:1; // rdc: connect previous node on read, rdd: next node
 	u2i vst;
 	u2i nin, nou;
 	u2i nct, cov;
@@ -66,12 +66,12 @@ typedef struct {
 	int refbonus; // 1
 	int minlsp; // 3
 	float max_lsp_cov; // 0.3
-	int rma_win; // 5, min length of flinking high quality cns bases
-	int qltlo, qlthi; // 15, 60, trigger local remsa when cns quality <= qltlo
+	int editbw; // 32
+	int qltlo, qlthi; // 15, 60
 	float psub, pins, pdel, piex, pdex, hins, hdel; // 0.10, 0.10, 0.15, 0.15, 0.20, 0.20, 0.40
 } BSPOAPar;
 
-static const BSPOAPar DEFAULT_BSPOA_PAR = (BSPOAPar){0, SEQALIGN_MODE_OVERLAP, 4, 0, 20, 15, 1, 128, 64 * 1024, 2, -6, -3, -2, -8, -1, 20, 1, 3, 0.3, 5, 15, 60, 0.10, 0.10, 0.15, 0.15, 0.20, 0.20, 0.40};
+static const BSPOAPar DEFAULT_BSPOA_PAR = (BSPOAPar){0, SEQALIGN_MODE_OVERLAP, 4, 0, 20, 15, 1, 128, 64 * 1024, 2, -6, -3, -2, -8, -1, 20, 1, 3, 0.3, 32, 15, 60, 0.10, 0.10, 0.15, 0.15, 0.20, 0.20, 0.40};
 
 typedef struct {
 	u4i coff:29, bt:3;
@@ -327,7 +327,7 @@ static inline void free_bspoa(BSPOA *g){
 }
 
 static inline void push_bspoacore(BSPOA *g, char *seq, u4i len, u4i *cgs, u4i ncg){
-	if(g->seqs->nseq < BSPOA_RDCNT_MAX && len){
+	if(g->seqs->nseq < BSPOA_RDCNT_MAX){
 		len = num_min(len, BSPOA_RDLEN_MAX);
 		push_seqbank(g->seqs, NULL, 0, seq, len);
 		push_u4v(g->cgbs, g->cigars->size);
@@ -339,7 +339,7 @@ static inline void push_bspoacore(BSPOA *g, char *seq, u4i len, u4i *cgs, u4i nc
 static inline void push_bspoa(BSPOA *g, char *seq, u4i len){ push_bspoacore(g, seq, len, NULL, 0); }
 
 static inline void bitseqpush_bspoacore(BSPOA *g, u1i *seq, u4i len, u4i *cgs, u4i ncg){
-	if(g->seqs->nseq < BSPOA_RDCNT_MAX && len){
+	if(g->seqs->nseq < BSPOA_RDCNT_MAX){
 		len = num_min(len, BSPOA_RDLEN_MAX);
 		bitseqpush_seqbank(g->seqs, NULL, 0, seq, len);
 		push_u4v(g->cgbs, g->cigars->size);
@@ -933,7 +933,7 @@ static inline void str_msa_qlt_bspoacore(BSPOA *g, u4i mbeg, u4i mend, u4i row, 
 			ch = '!' + col[j];
 			if(colorful){
 				if(col[j] < g->par->qltlo){
-					append_string(g->strs, "\e[33m", 5);
+					append_string(g->strs, "\e[32m", 5);
 				} else if(col[j] < g->par->qlthi){
 					append_string(g->strs, "\e[31m", 5);
 				}
@@ -980,10 +980,10 @@ static inline void print_msa_bspoa(BSPOA *g, const char *label, u4i mbeg, u4i me
 	for(;beg<mend;beg=end){
 		end = num_min(mend, beg + linewidth);
 		str_msa_ruler_bspoacore(g, beg, end, colorful);
-		fprintf(out, "%s [POS] %s\n", label, g->strs->string);
+		fprintf(out, "%s MSA [POS] %s\n", label, g->strs->string);
 		cbeg = roffs[nseq];
 		for(i=0;i<mrow;i++){
-			fprintf(out, "%s ", label);
+			fprintf(out, "%s MSA ", label);
 			if(i <= nseq){
 				rend = str_msa_seq_bspoacore(g, beg, end, i, roffs[i], colorful);
 				if(i == nseq){
@@ -1004,7 +1004,7 @@ static inline void print_msa_bspoa(BSPOA *g, const char *label, u4i mbeg, u4i me
 			}
 		}
 		str_cns_ruler_bspoacore(g, beg, end, cbeg, colorful);
-		fprintf(out, "%s [POS] %s\n", label, g->strs->string);
+		fprintf(out, "%s MSA [POS] %s\n", label, g->strs->string);
 		clear_string(g->strs); encap_string(g->strs, roffs[nseq] - cbeg);
 		str = g->strs->string;
 		for(i=cbeg;i<roffs[nseq];i++){
@@ -1179,18 +1179,18 @@ static inline void connect_rdnode_bspoa(BSPOA *g, u2i rid, int pos){
 		return;
 	}
 	chg_edge_bspoa(g, u, v, 1, NULL);
-	v->rdc = 1;
+	u->rdd = v->rdc = 1;
 }
 
 static inline void disconnect_rdnode_bspoa(BSPOA *g, u2i rid, int pos){
 	bspoanode_t *u, *v;
 	u = get_rdnode_bspoa(g, rid, pos - 1);
-	v = get_rdnode_bspoa(g, rid, pos);
-	if(v->rdc == 0){
+	if(u->rdd == 0){
 		return;
 	}
+	v = get_rdnode_bspoa(g, rid, pos);
 	chg_edge_bspoa(g, u, v, -1, NULL);
-	v->rdc = 0;
+	u->rdd = v->rdc = 0;
 }
 
 static inline int isconnect_rdnode_bspoa(BSPOA *g, u2i rid, int pos){
@@ -1246,22 +1246,22 @@ static inline bspoanode_t* cut_rdnode_bspoa(BSPOA *g, u2i rid, int pos, int cut)
 				x = ref_bspoanodev(g->nodes, x->aligned);
 			}
 			x = ref_bspoanodev(g->nodes, header[1]);
-			if(isconnect_rdnode_bspoa(g, rid, pos + 1)){
+			if(u->rdd){
 				_mov_node_edges_bspoacore(g, u, x, nodes[0], 0, BSPOA_EMOVTYPE_KPTONE);
 			} else {
 				_mov_node_edges_bspoacore(g, u, x, nodes[0], 0, BSPOA_EMOVTYPE_MOVALL);
 			}
-			if(isconnect_rdnode_bspoa(g, rid, pos)){
+			if(u->rdc){
 				_mov_node_edges_bspoacore(g, u, x, nodes[1], 1, BSPOA_EMOVTYPE_KPTONE);
 			} else {
 				_mov_node_edges_bspoacore(g, u, x, nodes[1], 1, BSPOA_EMOVTYPE_MOVALL);
 			}
 		} else {
 			x = ref_bspoanodev(g->nodes, header[0]);
-			if(isconnect_rdnode_bspoa(g, rid, pos + 1)){
+			if(u->rdd){
 				_mov_node_edges_bspoacore(g, x, u, nodes[0], 0, BSPOA_EMOVTYPE_MOVONE);
 			}
-			if(isconnect_rdnode_bspoa(g, rid, pos)){
+			if(u->rdc){
 				_mov_node_edges_bspoacore(g, x, u, nodes[1], 1, BSPOA_EMOVTYPE_MOVONE);
 			}
 		}
@@ -1729,9 +1729,8 @@ static inline void prepare_rd_align_bspoa(BSPOA *g, BSPOAPar *par, u4i nhead, u4
 			u = ref_bspoanodev(g->nodes, g->sels->buffer[i]);
 			rpos = rmap[u->cpos] - g->bandwidth / 2;
 			if(rpos < 0) rpos = 0;
-			else if(rpos + g->bandwidth > g->slen){
-				rpos = g->slen - g->bandwidth;
-			}
+			else if(g->bandwidth >= g->slen) rpos = 0;
+			else if(rpos + g->bandwidth > g->slen) rpos = g->slen - g->bandwidth;
 			u->rpos = rpos;
 			if(u->cpos == tb && tb){
 				chg_edge_bspoa(g, ref_bspoanodev(g->nodes, nhead), u, 1, &exists);
@@ -1998,7 +1997,9 @@ static inline seqalign_result_t alignment2graph_bspoa(BSPOA *g, BSPOAPar *par, u
 					ft |= 1 << SEQALIGN_BT2_D2;
 				} else if(x == Int(w->rpos)){
 					if(w->rpos == 0 && (seqalign_mode_type(par->alnmode) == SEQALIGN_MODE_OVERLAP || offset_bspoanodev(g->nodes, w) == nhead)){
-						Hs[0] = 0;
+						Hs[0] = ubegs[0];
+						ft |= 1 << 15;
+						//Hs[0] = 0;
 					} else {
 						Hs[0] = ubegs[0]; // useless
 						ft |= 1 << SEQALIGN_BT_M; // forbid M
@@ -2009,6 +2010,7 @@ static inline seqalign_result_t alignment2graph_bspoa(BSPOA *g, BSPOAPar *par, u
 				//s = g->matrix[(w->base == n->base) * 2 + n->bonus][g->qseq->buffer[x + g->qb] * 4 + n->base];
 				t = (x * 4 + n->base) * WORDSIZE;
 				s = g->qprof[(w->base == n->base) * 2 + n->bonus]->buffer[t];
+				if(ft & (1 << 15)) s -= ubegs[0];
 				t = ((x - w->rpos) % W) * WORDSIZE + ((x - w->rpos) / W);
 				push_u4v(g->stack, e->node);
 				push_u4v(g->stack, UInt(Hs[0]));
@@ -3260,8 +3262,7 @@ static inline void remsa_edits_bspoa(BSPOA *g, u4i W){
 	lc = 4; mc = 0; memset(cnts, 0, 4 * sizeof(u4i));
 	clear_u4v(g->stack);
 	for(lpos=pos=0;pos<=mlen;pos++){
-		col = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
-		if(pos == mlen || (col[nseq] < 4 && col[nseq] != lc)){
+		if(pos == mlen || ((col = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow)[nseq] < 4 && col[nseq] != lc)){
 			sort_array(g->stack->buffer, g->stack->size, hp_base_t, num_cmpgt(a.base, b.base));
 			for(i=p=0;i<=g->stack->size;i++){
 				if(i < g->stack->size && ((hp_base_t)g->stack->buffer[i]).base == ((hp_base_t)g->stack->buffer[p]).base){
@@ -3431,7 +3432,7 @@ static inline void end_bspoa(BSPOA *g){
 	msa_bspoa(g);
 	for(i=0;i<g->par->realn;i++){
 		cns_bspoa(g);
-		remsa_edits_bspoa(g, 32);
+		remsa_edits_bspoa(g, g->par->editbw);
 		msa_bspoa(g);
 	}
 	cns_bspoa(g);
@@ -3614,7 +3615,7 @@ static inline void denoising_msa_bspoa(BSPOA *g, u1i qlthi, u1i althi){
 	}
 }
 
-static inline void print_snp_bspoa(BSPOA *g, FILE *out){
+static inline void print_snp_bspoa(BSPOA *g, char *label, FILE *out){
 	bspoavar_t *var;
 	u4i i, j, fsz, fct, rid, nseq, mrow, mlen, dep;
 	u1i *col;
@@ -3636,11 +3637,7 @@ static inline void print_snp_bspoa(BSPOA *g, FILE *out){
 		memcpy(flanks[1], g->cns->buffer + var->cpos + 1, fct);
 		for(j=0;j<fct;j++) flanks[1][j] = bit_base_table[(int)flanks[1][j]];
 		flanks[1][fct] = 0;
-		if(g->mtag->size){
-			fprintf(out, "SNP %s\t", g->mtag->string);
-		} else {
-			fprintf(out, "SNP %llu\t", g->ncall);
-		}
+		fprintf(out, "%s SNP\t", label);
 		col = g->msacols->buffer + g->msaidxs->buffer[var->mpos] * mrow;
 		for(dep=rid=0;rid<nseq;rid++){
 			if(col[rid] <= 4) dep ++;
@@ -4201,12 +4198,11 @@ static inline void beg_merge_bspoa(BSPOA *dg, BSPOA *mg){
 
 static inline void push_merge_bspoa(BSPOA *dg, BSPOA *mg, u1i *msa, u4i nseq, u4i mlen){
 	u4i roff, noff, *rpos, *xoffs, mpos, mrow;
-	u4i ridx, ridb, nidx, nidxs[4];
+	u4i ridx, nidx, nidxs[4];
 	u1i *col;
 	mrow = nseq + 3;
 	roff = dg->seqs->nseq;
 	noff = dg->nodes->size;
-	ridb = 0;
 	clear_and_encap_b1v(dg->memp, 2 * nseq * sizeof(u4i));
 	rpos  = (u4i*)dg->memp->buffer;
 	xoffs = rpos + nseq;
@@ -4219,7 +4215,6 @@ static inline void push_merge_bspoa(BSPOA *dg, BSPOA *mg, u1i *msa, u4i nseq, u4
 				push_u1v(mg->cns, col[ridx]);
 			}
 		}
-		if(mg->cns->size == 0 && ridx == 0) ridb = 1;
 		if(ridx == nseq){
 			bitseqpush_bspoa(mg, mg->cns->buffer, mg->cns->size);
 		} else {
@@ -4227,16 +4222,15 @@ static inline void push_merge_bspoa(BSPOA *dg, BSPOA *mg, u1i *msa, u4i nseq, u4
 			xoffs[ridx] = mg->cns->size;
 		}
 	}
-	nidx = xoffs[0] = noff + 1;
-	for(ridx=ridb;ridx<nseq;ridx++){
+	for(ridx=0;ridx<nseq;ridx++){
+		xoffs[ridx] = dg->nodes->size + 1;
 		add_rdnodes_bspoa(dg, roff + ridx);
-		swap_var(xoffs[ridx], nidx);
-		nidx += xoffs[ridx] + 2;
 	}
+	push_u4v(dg->sels, 0);
 	for(mpos=0;mpos<mlen;mpos++){ // merge inner nodes
 		col = msa + mpos * mrow;
 		memset(nidxs, 0, 4 * sizeof(u4i));
-		for(ridx=ridb;ridx<nseq;ridx++){
+		for(ridx=0;ridx<nseq;ridx++){
 			if(col[ridx] >= 4) continue;
 			nidx = xoffs[ridx] + rpos[ridx];
 			if(nidxs[col[ridx]]){
@@ -4254,7 +4248,8 @@ static inline void push_merge_bspoa(BSPOA *dg, BSPOA *mg, u1i *msa, u4i nseq, u4
 			}
 		}
 	}
-	for(ridx=ridb;ridx<nseq;ridx++){
+	push_u4v(dg->sels, 0);
+	for(ridx=0;ridx<nseq;ridx++){
 		connect_rdnodes_bspoa(dg, roff + ridx);
 	}
 }
@@ -4262,7 +4257,7 @@ static inline void push_merge_bspoa(BSPOA *dg, BSPOA *mg, u1i *msa, u4i nseq, u4
 static inline void end_merge_bspoa(BSPOA *dg, BSPOA *mg){
 	bspoanode_t *v;
 	u4i *rpos, mpos, mlen, nseq, mrow;
-	u4i ridx, ridb, nidx, nidxs[4];
+	u4i i, ridx, ridb, nidx, nidxs[4];
 	u1i *col;
 	end_bspoa(mg);
 	nseq = mg->nrds;
@@ -4290,6 +4285,11 @@ static inline void end_merge_bspoa(BSPOA *dg, BSPOA *mg){
 	}
 	dg->nrds = dg->seqs->nseq;
 	msa_bspoa(dg);
+	for(i=0;i<(unsigned)dg->par->realn;i++){
+		cns_bspoa(dg);
+		remsa_edits_bspoa(dg, dg->par->editbw);
+		msa_bspoa(dg);
+	}
 	cns_bspoa(dg);
 }
 
