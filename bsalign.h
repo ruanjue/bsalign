@@ -77,6 +77,7 @@ typedef __m256i	xint;
 #define mm_load	_mm256_load_si256
 #define mm_loadu	_mm256_loadu_si256
 #define mm_store	_mm256_store_si256
+#define mm_storeu	_mm256_storeu_si256
 #define mm_or	_mm256_or_si256
 #define mm_xor	_mm256_xor_si256
 #define mm_and	_mm256_and_si256
@@ -104,6 +105,7 @@ typedef __m256i	xint;
 #define mm_adds_epi16	_mm256_adds_epi16
 #define mm_add_epi32	_mm256_add_epi32
 #define mm_subs_epi8	_mm256_subs_epi8
+#define mm_subs_epu8	_mm256_subs_epu8
 #define mm_subs_epi16	_mm256_subs_epi16
 #define mm_sub_epi32	_mm256_sub_epi32
 #define mm_cmpeq_epi8	_mm256_cmpeq_epi8
@@ -115,6 +117,8 @@ typedef __m256i	xint;
 #define mm_movemask_epi8	_mm256_movemask_epi8
 #define mm_max_epi8	_mm256_max_epi8
 #define mm_min_epi8	_mm256_min_epi8
+#define mm_max_epu8	_mm256_max_epu8
+#define mm_min_epu8	_mm256_min_epu8
 #define mm_max_epi16	_mm256_max_epi16
 #define mm_min_epi16	_mm256_min_epi16
 #define mm_max_epi32	_mm256_max_epi32
@@ -141,6 +145,7 @@ typedef __m128i	xint;
 #define mm_load	_mm_load_si128
 #define mm_loadu	_mm_loadu_si128
 #define mm_store	_mm_store_si128
+#define mm_storeu	_mm_storeu_si128
 #define mm_or	_mm_or_si128
 #define mm_xor	_mm_xor_si128
 #define mm_and	_mm_and_si128
@@ -168,6 +173,7 @@ typedef __m128i	xint;
 #define mm_adds_epi16	_mm_adds_epi16
 #define mm_add_epi32	_mm_add_epi32
 #define mm_subs_epi8	_mm_subs_epi8
+#define mm_subs_epu8	_mm_subs_epu8
 #define mm_subs_epi16	_mm_subs_epi16
 #define mm_sub_epi32	_mm_sub_epi32
 #define mm_cmpeq_epi8	_mm_cmpeq_epi8
@@ -179,6 +185,8 @@ typedef __m128i	xint;
 #define mm_movemask_epi8	_mm_movemask_epi8
 #define mm_max_epi8	_mm_max_epi8
 #define mm_min_epi8	_mm_min_epi8
+#define mm_max_epu8	_mm_max_epu8
+#define mm_min_epu8	_mm_min_epu8
 #define mm_max_epi16	_mm_max_epi16
 #define mm_min_epi16	_mm_min_epi16
 #define mm_max_epi32	_mm_max_epi32
