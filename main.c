@@ -77,16 +77,16 @@ int usage_poa(){
 	" -Q <string> Penalty for gap2 open, [0,0]\n"
 	" -P <string> Penalty for gap2 extension, [0,0]\n"
 	" -G <string> misc parameters for POA, <tag>=<val>\n"
-	"             Defaults: refmode=0,refbonus=1,nrec=20,kmer=15,trigger=1,realn=4,remsa=0,rma_win=5,qltlo=20,qlthi=60,\n"
+	"             Defaults: refmode=0,refbonus=1,nrec=20,kmer=15,trigger=1,realn=3,remsa=0,editbw=32,qltlo=20,qlthi=60,\n"
 	"                       psub=0.10,pins=0.10,pdel=0.15,piex=0.15,pdex=0.20,hins=0.20,hdel=0.40\n"
 	"              refmode: whether the first sequences is reference sequence, useful in polishing\n"
 	"              refbonus: base match score on reference will be M + refbonus\n"
 	"              nrec: every query read is aligning against previous <nrec> reads on graph, 0 to all the previous\n"
 	"              trigger: when <trigger> > 0 and <-W> < query length, genrates CNS per after <trigger> reads, and trigger banded alignment\n"
 	"              realn: rounds of realignment\n"
+	"              editbw=32: bandwidth in edit MSA\n"
 	"              remsa=0: disable remsa\n"
 	"              remsa=1: based on consensus sequence, invoke local realignment for each low score region per read\n"
-	"              rma_win: min length of flinking high quality cns bases\n"
 	"              qltlo: cutoff of high alt base quality\n"
 	"              qlthi: cutoff of high cns base quality\n"
 	"              psub/pins/pdel/piex/pdex: for consensus, probs. of mis/ins/del/ins_ext/del_ext\n"
@@ -453,7 +453,7 @@ int main_poa(int argc, char **argv){
 					else if(strncasecmp("refbonus", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.refbonus = atoi(str + mats[2].rm_so);
 					else if(strncasecmp("realn", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.realn = atoi(str + mats[2].rm_so);
 					else if(strncasecmp("remsa", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.remsa = atoi(str + mats[2].rm_so);
-					else if(strncasecmp("rma_win", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.rma_win = atoi(str + mats[2].rm_so);
+					else if(strncasecmp("editbw", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.editbw = atoi(str + mats[2].rm_so);
 					else if(strncasecmp("qltlo", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.qltlo = atoi(str + mats[2].rm_so);
 					else if(strncasecmp("qlthi", str + mats[1].rm_so, mats[1].rm_eo - mats[1].rm_so) == 0) par.qlthi = atoi(str + mats[2].rm_so);
 					else {
@@ -515,7 +515,7 @@ int main_poa(int argc, char **argv){
 		int recnt;
 		for(recnt=0;recnt<1;recnt++){
 			if(_DEBUG_LOG_){
-				print_msa_bspoa(g, "LSP", 0, 0, 0, 1, _DEBUG_LOGFILE_);
+				print_msa_bspoa(g, "BSALIGN", 0, 0, 0, 1, _DEBUG_LOGFILE_);
 			}
 			if(par.remsa == 1){
 				remsa_lsps_bspoa(g, &rpar);
@@ -523,9 +523,9 @@ int main_poa(int argc, char **argv){
 		}
 	}
 	if(mline){
-		print_msa_bspoa(g, "MSA", 0, 0, 100, colorful, stdout);
+		print_msa_bspoa(g, "BSALIGN", 0, 0, 100, colorful, stdout);
 	} else {
-		print_msa_bspoa(g, "MSA", 0, 0,   0, colorful, stdout);
+		print_msa_bspoa(g, "BSALIGN", 0, 0,   0, colorful, stdout);
 	}
 	if(out){
 		u4i i;
@@ -535,11 +535,9 @@ int main_poa(int argc, char **argv){
 		fprintf(out, ">cns_seq\n%s\n", g->strs->string);
 		close_file(out);
 	}
-	if(1){
-		denoising_msa_bspoa(g, g->par->qlthi, g->par->qltlo);
-		print_msa_bspoa(g, "CSA", 0, 0,   0, colorful, stdout);
-		print_snp_bspoa(g, stdout);
-	}
+	denoising_msa_bspoa(g, g->par->qlthi, g->par->qltlo);
+	print_msa_bspoa(g, "BSALIGN", 0, 0,   0, colorful, stdout);
+	print_snp_bspoa(g, "BSALIGN", stdout);
 	if(msaend >= msabeg){
 		FILE *out;
 		out = open_file_for_write("1.dot", NULL, 1);
