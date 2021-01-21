@@ -3220,7 +3220,6 @@ static inline int maxmat_dp_diag_rowcal_prepare(int x, int y, int mlen, int W, u
 	rows[0][1] = matrix[1] + rowlen * moff + rowbeg;
 	rows[1][0] = matrix[0] + rowlen * (moff + 1) + rowbeg;
 	rows[1][1] = matrix[1] + rowlen * (moff + 1) + rowbeg;
-	rows[1][2] = matrix[2] + rowlen * (moff + 1) + rowbeg;
 	seqs[0]    = _seqs[0] + xb;
 	seqs[1]    = _seqs[1] + yb;
 	mats[0][0] = _mats[0][0] + xb;
@@ -3242,6 +3241,7 @@ static inline void maxmat_dp_diag_rowcal_verify(int x, int y, int W, int dir, u1
 	}
 	for(i=0;i<len;i++){
 		s = (seqs[1][i] < 4? mats[0][seqs[1][i]][i] : 0) + (seqs[0][i] < 4? mats[1][seqs[0][i]][i] : 0);
+		if(s > Int(MAX_U1)) s = MAX_U1;
 		if(dir){
 			u = rows[0][0][i + 1];
 			v = rows[0][1][i];
@@ -3429,6 +3429,7 @@ static inline int remsa_pedit_rd_bspoacore(BSPOA *g, u4i nseq, u2i rid, u4i rbeg
 		{
 			int s, h, e, f, bt;
 			h = (seqs[1][xx] < 4? mats[0][seqs[1][xx]][xx] : 0) + (seqs[0][xx] < 4? mats[1][seqs[0][xx]][xx] : 0);
+			if(h > Int(MAX_U1)) h = MAX_U1;
 			if(dir){
 				e = rows[0][0][xx + 1];
 				f = rows[0][1][xx];
