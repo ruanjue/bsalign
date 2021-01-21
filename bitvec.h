@@ -196,7 +196,11 @@ static inline void flip_bitvec(BitVec *bitv, u8i idx){ bitv->bits[idx>>6] ^= 1LL
 
 static inline void one_bitvec(BitVec *bitv, u8i idx){ bitv->bits[idx>>6] |= 1LLU << (idx&0x3FU); }
 
+static inline void one64_bitvec(BitVec *bitv, u8i idx){ bitv->bits[idx>>6] = 0xFFFFFFFFFFFFFFFFLLU; }
+
 static inline void zero_bitvec(BitVec *bitv, u8i idx){ bitv->bits[idx>>6] &= ~(1LLU << (idx&0x3FU)); }
+
+static inline void zero64_bitvec(BitVec *bitv, u8i idx){ bitv->bits[idx>>6] = 0; }
 
 static inline void set_bitvec(BitVec *bitv, u8i idx, int v){
 	if(v){
