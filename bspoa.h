@@ -4564,12 +4564,11 @@ static inline void denoising_msa_bspoa(BSPOA *g, u1i qlthi, u1i althi){
 			if(e + 1 >= f){
 				bss = g->msacols->buffer + g->msaidxs->buffer[lpos] * mrow;
 				for(e=f=rid=0;rid<nseq;rid++){
-					if(col[rid] == alt){
-						if(bss[rid] == 4) f ++;
-						else e ++;
-					}
+					if(col[rid] < 4 && bss[rid] < 4) e ++;
+					else if(col[rid] < 4 || bss[rid] < 4) f ++;
 				}
-				if(f >= Int(0.75 * bcnts[alt]) && e <= Int(0.40 * num_min(gap, lst))){
+				//fprintf(stdout, "TENON_MORTISE\t%d\t%d\tfixed=%d\tunfix=%d\n", lpos, pos, f, e);
+				if(f >= Int(0.75 * bcnts[5]) && e <= Int(0.40 * num_min(gap, lst))){
 					//FIX[0].pos  = lpos;
 					//FIX[0].fix  = f;
 					//FIX[0].base = lc;
@@ -4578,7 +4577,6 @@ static inline void denoising_msa_bspoa(BSPOA *g, u1i qlthi, u1i althi){
 					//FIX[1].base = alt;
 					//push_u8v(g->heap, ((u8i*)FIX)[0]);
 					//push_u8v(g->heap, ((u8i*)FIX)[1]);
-					//fprintf(stdout, "TENON_MORTISE\t%d\t%d\t%d\t%d\t%d\t%d\n", FIX[0].pos, FIX[1].pos, FIX[0].fix, bcnts[alt], gap, bcnts[5]);
 					for(rid=0;rid<nseq;rid++){
 						if(col[rid] == alt && bss[rid] == 4){
 							bss[rid] = alt;
