@@ -80,7 +80,7 @@ static inline int count_ones_bit64(const u8i x){
 
 static inline size_t bitvec_obj_desc_cnt(void *bitv, int idx){
 	switch(idx){
-		case 0: return ((BitVec*)bitv)->n_cap / 64 * 8;
+		case 0: return (((BitVec*)bitv)->n_cap / 64 + 1) * 8;
 		case 1: return ((BitVec*)bitv)->sums? (((BitVec*)bitv)->sum_size * 2 + 1) * 8 : 0;
 		case 2: return ((BitVec*)bitv)->hash? (((BitVec*)bitv)->hash_size) * 8 : 0;
 		default: return 0;
@@ -106,6 +106,20 @@ static inline BitVec* init_bitvec(u8i n_bit){
 	bitv->hash_mod = 0;
 	bitv->iter_idx = 0;
 	return bitv;
+}
+
+static inline void encap_bitvec(BitVec *bitv, u8i num){
+	u8i cap;
+	if(bitv->n_bit + num < bitv->n_cap) return;
+	cap = bitv->n_cap;
+	while(bitv->n_bit + num >= bitv->n_cap){
+		if(bitv->n_cap < 1024 * 1024 * 8){
+			bitv->n_cap <<= 1;
+		} else bitv->n_cap += 1024 * 1024 * 8;
+	}
+	bitv->bits = (u8i*)realloc(bitv->bits, bitv->n_cap / 8 + 8);
+	memset(((void*)bitv->bits) + cap / 8, 0, (bitv->n_cap - cap) / 8 + 8);
+	bitv->bits[cap / 64] = 0x0000000000000001LLU;
 }
 
 static inline size_t dump_bitvec(BitVec *bitv, FILE *out){
@@ -164,6 +178,7 @@ static inline void zeros_bitvec(BitVec *bitv){ memset(bitv->bits, 0, bitv->n_cap
 static inline void reg_zeros_bitvec(BitVec *bitv, u8i beg, u8i end){
 	u8i b, e;
 	if(beg >= end) return;
+	encap_bitvec(bitv, end);
 	b = beg >> 6;
 	e = end >> 6;
 	if(b == e){
@@ -181,6 +196,7 @@ static inline void ones_bitvec(BitVec *bitv){ memset(bitv->bits, 0xFFU, bitv->n_
 static inline void reg_ones_bitvec(BitVec *bitv, u8i beg, u8i end){
 	u8i b, e;
 	if(beg >= end) return;
+	encap_bitvec(bitv, end);
 	b = beg >> 6;
 	e = end >> 6;
 	if(b == e){
@@ -234,20 +250,6 @@ static inline void set64_bitvec(BitVec *bitv, u8i off, u8i val){
 	} else {
 		bitv->bits[m] = val;
 	}
-}
-
-static inline void encap_bitvec(BitVec *bitv, u8i num){
-	u8i cap;
-	if(bitv->n_bit + num < bitv->n_cap) return;
-	cap = bitv->n_cap;
-	while(bitv->n_bit + num >= bitv->n_cap){
-		if(bitv->n_cap < 1024 * 1024 * 8){
-			bitv->n_cap <<= 1;
-		} else bitv->n_cap += 1024 * 1024 * 8;
-	}
-	bitv->bits = (u8i*)realloc(bitv->bits, bitv->n_cap / 8 + 8);
-	memset(((void*)bitv->bits) + cap / 8, 0, (bitv->n_cap - cap) / 8 + 8);
-	bitv->bits[cap / 64] = 0x0000000000000001LLU;
 }
 
 static inline void recap_bitvec(BitVec *bitv, u8i new_cap){
