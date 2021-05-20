@@ -1,6 +1,6 @@
 # bsalign
 
-bsalign is a library/tool for adaptive banding striped 8-bit-scoring global/extend/overlap DNA sequence alignment
+bsalign is a library/tool for adaptive banding striped 8/2-bit-scoring global/extend/overlap DNA sequence pairwise/multiple alignment
 
 # Installation
 ```sh
@@ -12,29 +12,71 @@ make
 # run bsalign
 
 ```sh
-bslaign -h
+bsalign
 ```
-### options
 ```txt
- -h          Show this document
- -m <string> align mode: global, extend, overlap [overlap]
- -W <int>    Bandwidth, 0: full length of query [0]
-             set it to a small value if the begins of two reads are nearly aligned
- -M <int>    Score for match, [2]
- -X <int>    Penalty for mismatch, [6]
- -O <int>    Penalty for gap open, [3]
- -E <int>    Penalty for gap extension, [2]
- -Q <int>    Penalty for gap2 open, [0]
- -P <int>    Penalty for gap2 extension, [0]
- -R <int>    repeat times (for benchmarking) [1]
- -v          Verbose
- Gap-weighting functions
- If P < E and Q + P > O + E, 2-piecewise affine gap cost
-  e.g. -M 2 -X 6 -O 3 -E 2 -Q 18 -P 1
- Else if O > 0, 1-piecewise affine gap cost
-  e.g. -M 2 -X 6 -O 3 -E 2 -Q 0 -P 0
- Else, linear gap cost
-  e.g. -M 2 -X 6 -O 0 -E 5 -Q 0 -P 0
+commands:
+ align       Pairwise alignment implemented by 8-bit encoded Banded Striped SIMD
+ edit        Pairwise alignment using edit distance implemented by 2-bit encoded banded Striped algorithm
+ poa         Multiple alignment implemented by 8-bit encoded Banded Striped SIMD Partial Order Alignment
+ cat         Concatenate pieces of seqs into one seq by overlaping
+```
+
+# use bsalign library
+
+copy bsalign directory into your code `cp -r /path/to/bsalign .`
+
+## Pairwise Alignment Example
+```txt
+#include "bsalign/bsalign.h"
+
+int verbose = 0; // be quiet in alignment
+b1i mtx[16]; // score matrix, 4 * 4
+banded_striped_epi8_seqalign_set_score_matrix(mtx, sc_mat=2, sc_mis=-6); // init score matrix
+b1v *memp = adv_init_b1v(1024, 0, WORDSIZE, 0); // it needs a WORDSIZE(16 bytes)-aligned memory block to perform SIMD alignment
+u4v *cigars = init_u4v(32); // use to store alignment cigars (SAM-like), or NULL if useless
+int bandwidth = 128; // Or 0 if disable banded alignment
+// perform pairwise global alignment (8-bits)
+seqalign_result_t rs = banded_striped_epi8_seqalign_pairwise((u1i*)qseq, qlen, (u1i*)tseq, tlen, memp, cigars, SEQALIGN_MODE_GLOBAL, bandwidth, mtx, sc_gapo=-3, sc_gape=-2, 0, 0, verbose);
+// perform pairwise global edit (2-bits), using edit-distance in alignment, much faster than 8-bits alignment
+seqalign_result_t rs = striped_seqedit_pairwise((u1i*)qseq, qlen, (u1i*)tseq, tlen, SEQALIGN_MODE_GLOBAL, bandwidth, memp, cigars, verbose);
+// perform pairwise kmer-guided edit (2-bits), it is better for two strange reads, because it infers the outline of alignment by kmer-matching-synteny
+seqalign_result_t rs = kmer_striped_seqedit_pairwise(ksize=13, (u1i*)qseq, qlen, (u1i*)tseq, tlen, memp, cigars, verbose);
+// print alignment information
+fprintf(stdout, "QRY\t%d\t%d\tREF\t%d\t%d\tmat=%d\tmis=%d\t%ins=%d\tdel=%d\n", rs.qb, rs.qe, rs.tb, rs.te, rs.mat, rs.mis, rs.ins, rs.del);
+char *alnstr[3];
+alnstr[0] = malloc(rs.aln + 1);
+alnstr[1] = malloc(rs.aln + 1);
+alnstr[2] = malloc(rs.aln + 1);
+seqalign_cigar2alnstr(qseq, tseq, &rs, cigars, alnstr, rs.aln);
+// print alignment string
+fprintf(stdout, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
+free(alnstr[0]); free(alnstr[1]); free(alnstr[2]);
+free_u4v(cigars);
+free_b1v(memp);
+```
+
+## Multiple Alignment Example
+```txt
+#include "bsalign/bspoa.h"
+
+BSPOAPar par = DEFAULT_BSPOA_PAR; // change par.xxx if you want
+BSPOA *g = init_bspoa(par);
+beg_bspoa(g); // prepare to accept reads
+for(...) push_bspoa(g, (char*)rdseq, (int)rdlen); // push reads one by one
+end_bspoa(g); // MSA generated
+tidy_msa_bspoa(g); // polish MSA to call more SNVs
+call_snvs_bspoa(g); // call SNVs on the polished MSA
+// print MSA, linewidth=0 to output each read in a single line
+// colorful=1 to output friendly terminal characters, pipe to 'less -S -R' if no color in your screen
+print_msa_bspoa(g, "<MSA_ID>", 0, 0, linewidth=100, colorful=1, stdout);
+print_snvs_bspoa(g, "<MSA_ID>", stdout);
+// Or write binary MSA (no SNVs) to save disk space
+dump_binary_msa_bspoa(g, "Welcome to AGIS", 15, file);
+// Load a binary MSA instead of beg/push/end_bspoa, Note: invoke call_snvs_bspoa if you want SNVs
+String *metainfo = init_string(32);
+load_binary_msa_bspoa(g, file, metainfo);
+free_bspoa(g);
 ```
 
 # Contact
