@@ -1168,6 +1168,12 @@ static const obj_desc_t seqbank_obj_desc = {"SeqBank", sizeof(SeqBank), 5, {1, 1
 	{&basebank_obj_desc, &cplist_deep_obj_desc, &u8v_obj_desc, &u4v_obj_desc, &cuhash_obj_desc},
 	NULL, rebuild_rdhash_seqbank};
 
+typedef struct {
+	u4i rid:30, dir:1, status:1;
+	u2i off, len;
+} seqbank_reg_t;
+define_list(seqbankregv, seqbank_reg_t);
+
 static inline SeqBank* init_seqbank(){
 	SeqBank *sb;
 	sb = malloc(sizeof(SeqBank));
