@@ -221,10 +221,18 @@ static inline hash_ele_type* add_##hash_type(hash_type *set, hash_ele_type ele){
 	return NULL;                                                                  \
 }
 
-#define put_hashset_macro(hash_type, hash_ele_type) \
+#define put_hashset_macro(hash_type, hash_ele_type, hash_key_type, hash_val_type, hash_kv_set) \
 static inline hash_ele_type* put_##hash_type(hash_type *set, hash_ele_type ele){         \
 	encap_##hash_type(set, 1);                                                 \
 	return add_##hash_type(set, ele);                                          \
+}	\
+	\
+static inline hash_ele_type* kv_put_##hash_type(hash_type *set, hash_key_type key, hash_val_type val){	\
+	hash_ele_type ele;	\
+	UNUSED(key);	\
+	UNUSED(val);	\
+	hash_kv_set(hash_ele_type, ele, key, val);	\
+	return put_##hash_type(set, ele);	\
 }
 
 #define remove_hashset_macro(hash_type, hash_ele_type, hash_key_type, hash_key_code, hash_key_equal) \
@@ -406,16 +414,18 @@ static inline size_t offsetof_##hash_type(hash_type *set, hash_ele_type *ptr){ r
 
 
 #define ITSELF(E) (E)
+#define ITSELF_KV_SET(ETYPE, E, K, V) (E) = *((ETYPE*)&(K))
+#define HASH_KV_SET(ETYPE, E, K, V) { (E).key = (K); (E).val = (V); }
 #define NUM_EQUALS(E1, E2) ((E1) == (E2))
 
-#define define_hashtable(hash_type, hash_ele_type, hash_code_macro, hash_equal_macro, hash_key_type, hash_key_code, hash_key_equal, hash_val_type, hash_ele2val)    \
+#define define_hashtable(hash_type, hash_ele_type, hash_code_macro, hash_equal_macro, hash_key_type, hash_key_code, hash_key_equal, hash_val_type, hash_ele2val, hash_kv_set)    \
 	init_hashset_macro(hash_type, hash_ele_type);                              \
 	get_hashset_macro(hash_type, hash_ele_type, hash_key_type, hash_key_code, hash_key_equal, hash_val_type, hash_ele2val);    \
 	prepare_hashset_macro(hash_type, hash_ele_type, hash_key_type, hash_key_code, hash_key_equal);    \
 	exists_hashset_macro(hash_type, hash_ele_type, hash_key_type, hash_key_code, hash_key_equal);    \
 	add_hashset_macro(hash_type, hash_ele_type, hash_code_macro, hash_equal_macro);    \
-	put_hashset_macro(hash_type, hash_ele_type);                               \
-	remove_hashset_macro(hash_type, hash_ele_type, hash_key_type, hash_key_code, hash_key_equal);    \
+	put_hashset_macro(hash_type, hash_ele_type, hash_key_type, hash_val_type, hash_kv_set); \
+	remove_hashset_macro(hash_type, hash_ele_type, hash_key_type, hash_key_code, hash_key_equal); \
 	ref_iter_hashset_macro(hash_type, hash_ele_type);                          \
 	reset_iter_hashset_macro(hash_type);                                       \
 	count_hashset_macro(hash_type);                                            \
@@ -424,7 +434,7 @@ static inline size_t offsetof_##hash_type(hash_type *set, hash_ele_type *ptr){ r
 	free_hashset_macro(hash_type);                                             \
 	encap_hashset_macro(hash_type, hash_ele_type, hash_code_macro);
 
-#define define_hashset(hash_type, hash_ele_type, hash_code_macro, hash_equal_macro)  define_hashtable(hash_type, hash_ele_type, hash_code_macro, hash_equal_macro, hash_ele_type, hash_code_macro, hash_equal_macro, hash_ele_type*, ITSELF)
+#define define_hashset(hash_type, hash_ele_type, hash_code_macro, hash_equal_macro)  define_hashtable(hash_type, hash_ele_type, hash_code_macro, hash_equal_macro, hash_ele_type, hash_code_macro, hash_equal_macro, hash_ele_type*, ITSELF, ITSELF_KV_SET)
 
 /* ------------------ Useful functions ------------------------------------- */
 
@@ -559,25 +569,25 @@ typedef struct { u4i key, val; } uuhash_t;
 #define uuhash_code(e) u32hashcode((e).key)
 #define uuhash_equals(e1, e2) ((e1).key == (e2).key)
 #define uuhash_key_equals(e1, e2) ((e1) == (e2).key)
-define_hashtable(uuhash, uuhash_t, uuhash_code, uuhash_equals, u4i, u32hashcode, uuhash_key_equals, u4i, KV_HASH_GET_VAL);
+define_hashtable(uuhash, uuhash_t, uuhash_code, uuhash_equals, u4i, u32hashcode, uuhash_key_equals, u4i, KV_HASH_GET_VAL, HASH_KV_SET);
 
 typedef struct { u4i key; int val; } uihash_t;
 #define uihashcode(E) u32hashcode((E).key)
 #define uihashequals(E1, E2) (E1).key == (E2).key
 #define uihashkeyequals(E1, E2) (E1) == (E2).key
-define_hashtable(uihash, uihash_t, uihashcode, uihashequals, u4i, u32hashcode, uihashkeyequals, b4i, KV_HASH_GET_VAL);
+define_hashtable(uihash, uihash_t, uihashcode, uihashequals, u4i, u32hashcode, uihashkeyequals, b4i, KV_HASH_GET_VAL, HASH_KV_SET);
 
 typedef struct { u8i key, val; } UUhash_t;
 #define UUhashcode(E) u64hashcode((E).key)
 #define UUhashequals(E1, E2) (E1).key == (E2).key
 #define UUhashkeyequals(E1, E2) (E1) == (E2).key
-define_hashtable(UUhash, UUhash_t, UUhashcode, UUhashequals, u8i, u64hashcode, UUhashkeyequals, u8i, KV_HASH_GET_VAL);
+define_hashtable(UUhash, UUhash_t, UUhashcode, UUhashequals, u8i, u64hashcode, UUhashkeyequals, u8i, KV_HASH_GET_VAL, HASH_KV_SET);
 
 typedef struct { char *key; u4i val; } cuhash_t;
 #define cuhash_code(e) __string_hashcode((e).key)
 #define cuhash_equals(e1, e2) (strcmp((e1).key, (e2).key) == 0)
 #define cuhash_key_equals(e1, e2) (strcmp((char*)(e1), (e2).key) == 0)
-define_hashtable(cuhash, cuhash_t, cuhash_code, cuhash_equals, char*, __string_hashcode, cuhash_key_equals, u4i, KV_HASH_GET_VAL);
+define_hashtable(cuhash, cuhash_t, cuhash_code, cuhash_equals, char*, __string_hashcode, cuhash_key_equals, u4i, KV_HASH_GET_VAL, HASH_KV_SET);
 static const obj_desc_t cuhash_struct_deep_obj_desc = {"cuhash_struct_deep_obj_desc", sizeof(cuhash_t), 1, {1}, {offsetof(cuhash_t, key)}, {(obj_desc_t*)&OBJ_DESC_CHAR_ARRAY}, NULL, NULL};
 static const obj_desc_t cuhash_deep_obj_desc = {"cuhash_deep_obj_desc", sizeof(cuhash), 3, {1, 1, 1}, {offsetof(cuhash, array), offsetof(cuhash, ones), offsetof(cuhash, dels)}, {(obj_desc_t*)&cuhash_struct_deep_obj_desc, (obj_desc_t*)&bitvec_obj_desc, &bitvec_obj_desc}, cuhash_obj_desc_cnt, NULL};
 
@@ -585,20 +595,20 @@ typedef struct { char *key; int val; } cihash_t;
 #define cihash_code(e) __string_hashcode((e).key)
 #define cihash_equals(e1, e2) (strcmp((e1).key, (e2).key) == 0)
 #define cihash_key_equals(e1, e2) (strcmp((char*)(e1), (e2).key) == 0)
-define_hashtable(cihash, cihash_t, cihash_code, cihash_equals, char*, __string_hashcode, cihash_key_equals, b4i, KV_HASH_GET_VAL);
+define_hashtable(cihash, cihash_t, cihash_code, cihash_equals, char*, __string_hashcode, cihash_key_equals, b4i, KV_HASH_GET_VAL, HASH_KV_SET);
 
 typedef struct { char *key; unsigned long long val; } clhash_t;
 #define clhash_code(e) __string_hashcode((e).key)
 #define clhash_equals(e1, e2) (strcmp((e1).key, (e2).key) == 0)
 #define clhash_key_equals(e1, e2) (strcmp((char*)(e1), (e2).key) == 0)
-define_hashtable(clhash, clhash_t, clhash_code, clhash_equals, char*, __string_hashcode, clhash_key_equals, u8i, KV_HASH_GET_VAL);
+define_hashtable(clhash, clhash_t, clhash_code, clhash_equals, char*, __string_hashcode, clhash_key_equals, u8i, KV_HASH_GET_VAL, HASH_KV_SET);
 
 typedef struct { char *key; char *val; } cchash_t;
 #define cchash_code(e) __string_hashcode((e).key)
 #define cchash_equals(e1, e2) (strcmp((e1).key, (e2).key) == 0)
 #define cchash_key_equals(e1, e2) (strcmp((char*)(e1), (e2).key) == 0)
 #define KV_CCHASH_GET_VAL(e) ((e)? (e)->val : NULL)
-define_hashtable(cchash, cchash_t, cchash_code, cchash_equals, char*, __string_hashcode, cchash_key_equals, char*, KV_CCHASH_GET_VAL);
+define_hashtable(cchash, cchash_t, cchash_code, cchash_equals, char*, __string_hashcode, cchash_key_equals, char*, KV_CCHASH_GET_VAL, HASH_KV_SET);
 
 /**
 * Example of using userdata in thread-safe mode
