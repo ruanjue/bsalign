@@ -134,7 +134,7 @@ static inline void list_type##_obj_desc_post_load(void *obj, size_t aux_data){	\
 	list->cap = list->size;	\
 }	\
 	\
-static const obj_desc_t list_type##_obj_desc = {.tag = TOSTR(_list_##list_type), .size = sizeof(list_type), .n_child = 1, .mem_type = {1}, .addr = {offsetof(list_type, buffer)}, .desc = {(struct obj_desc_t*)&OBJ_DESC_DATA}, .cnt = list_type##_obj_desc_cnt, .post = list_type##_obj_desc_post_load};	\
+static const obj_desc_t list_type##_obj_desc = {.tag = TOSTR(list_type), .size = sizeof(list_type), .n_child = 1, .mem_type = {1}, .addr = {offsetof(list_type, buffer)}, .desc = {(struct obj_desc_t*)&OBJ_DESC_DATA}, .cnt = list_type##_obj_desc_cnt, .post = list_type##_obj_desc_post_load};	\
 	\
 static inline void adv_##list_type##_init(list_type *list, size_type init_size, int mem_zero, int aligned_base, u1i n_head){	\
 	if(init_size == 0) init_size = 2;	\
@@ -193,7 +193,9 @@ static inline size_type count_##list_type(list_type *list){ return list->size; }
 	\
 static inline void clear_##list_type(list_type *list){ list->size = 0; list->off = 0; }	\
 	\
-static inline void zeros_##list_type(list_type *list){ memset(list->buffer - list->n_head, 0, (list->cap + list->n_head) * sizeof(e_type)); }	\
+static inline void zeros_##list_type(list_type *list){ memset(list->buffer - list->n_head, 0, (list->size + list->n_head) * sizeof(e_type)); }	\
+	\
+static inline void all_zeros_##list_type(list_type *list){ memset(list->buffer - list->n_head, 0, (list->cap + list->n_head) * sizeof(e_type)); }	\
 	\
 static inline void encap_##list_type(list_type *list, size_type n){	\
 	list->cap = encap_list((void**)&(list->buffer), sizeof(e_type), list->size, list->cap, n, list->mem_zero, list->n_head, list->aligned);	\
@@ -242,6 +244,10 @@ static inline void clear_and_inc_##list_type(list_type *list, size_type n){	\
 	list->off  = 0;	\
 	encap_##list_type(list, n);	\
 	list->size = n;	\
+}	\
+	\
+static inline void resize_##list_type(list_type *list, size_type size){	\
+	clear_and_inc_##list_type(list, size);	\
 }	\
 	\
 static inline void trunc_##list_type(list_type *list, size_type size){	\
