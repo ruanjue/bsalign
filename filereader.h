@@ -226,12 +226,13 @@ static inline void reset_filereader(FileReader *fr){
 		fr->running = 0;
 		pthread_join(fr->pid, NULL);
 	}
+	clear_filesrcv(fr->files);
 	fr->fidx = 0;
 	fr->bufoff = 0;
 	fr->bufcnt[0] = 0;
 	fr->bufcnt[1] = 0;
 	fr->ridx = 0;
-	fr->widx = 0;
+	fr->widx = 1;
 	fr->flag = 0;
 #ifdef FR_USE_SPINLOCK
 	pthread_spin_destroy(&fr->lock);
@@ -262,7 +263,9 @@ static inline void free_filereader(FileReader *fr){
 	}
 	for(i=0;i<fr->files->size;i++){
 		f = ref_filesrcv(fr->files, i);
-		if(f->filename) free(f->filename);
+		if(f->filename && f->file_attr != FILEREADER_ATTR_TEXT){
+			free(f->filename);
+		}
 	}
 #ifdef FR_USE_SPINLOCK
 	pthread_spin_destroy(&fr->lock);
@@ -654,6 +657,88 @@ static inline int readseq_filereader(FileReader *fr, BioSequence *seq){
 		append_string(seq->dsc, fr->line->string, fr->line->size);
 		return FILEREADER_TYPE_TEXT;
 	}
+}
+
+typedef struct {
+	char **files;
+	int nfile, cfile;
+	FILE *inp;
+} MulFileInput;
+
+static inline MulFileInput* mul_files_init(int nfile, char **files){
+	MulFileInput *mf;
+	int i;
+	mf = malloc(sizeof(MulFileInput));
+	mf->nfile = nfile;
+	mf->files = malloc(nfile * sizeof(char*));
+	for(i=0;i<nfile;i++){
+		if(files[i]) mf->files[i] = strdup(files[i]);
+		else mf->files[i] = NULL;
+	}
+	mf->inp = NULL;
+	mf->cfile = -1;
+	return mf;
+}
+
+static inline ssize_t mul_files_read(void *obj, char *buffer, size_t size){
+	MulFileInput *mf;
+	size_t len, inc;
+	mf = (MulFileInput*)obj;
+	len = 0;
+	while(len < size){
+		if(mf->inp == NULL){
+			if(mf->cfile + 1 >= mf->nfile){
+				return len;
+			}
+			mf->cfile ++;
+			if((mf->inp = open_file_for_read(mf->files[mf->cfile], NULL)) == NULL){
+				return -1;
+			}
+			if(endswith_string(mf->files[mf->cfile], ".gz")){
+				mf->inp = fopen_pgzf_reader(mf->inp, 0, 8);
+			}
+		}
+		if((inc = fread(buffer, 1, size - len, mf->inp)) == 0){
+			fclose(mf->inp);
+			mf->inp = NULL;
+		} else {
+			len += inc;
+		}
+	}
+	return len;
+}
+
+static inline ssize_t mul_files_write(void *obj, const char *buffer, size_t size){
+	UNUSED(obj);
+	UNUSED(buffer);
+	UNUSED(size);
+	return -1;
+}
+
+static inline int mul_files_seek(void *obj, off64_t *pos, int whence){
+	UNUSED(obj);
+	UNUSED(pos);
+	UNUSED(whence);
+	return -1;
+}
+
+static inline int mul_files_close(void *obj){
+	MulFileInput *mf;
+	int i;
+	mf = (MulFileInput*)obj;
+	if(mf->inp) close_file(mf->inp);
+	for(i=0;i<mf->nfile;i++) free(mf->files[i]);
+	free(mf->files);
+	free(mf);
+	return 0;
+}
+
+static const cookie_io_functions_t mul_files_io_funs = { mul_files_read, mul_files_write, mul_files_seek, mul_files_close };
+
+static inline FILE* open_files_for_read(int nfile, char **files){
+	MulFileInput *mf;
+	mf = mul_files_init(nfile, files);
+	return fopencookie(mf, "r", mul_files_io_funs);
 }
 
 #endif
