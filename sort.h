@@ -547,4 +547,21 @@ do {	\
 	_bs_ret = _bs_i;	\
 } while(0)
 
+#define shuffle_array(dat_array, ord_array, rev_array, dat_size)	\
+do {	\
+	typeof((dat_array)[0]) _shf_e;	\
+	size_t _shf_i, _shf_j, _shf_t, _shf_n;	\
+	_shf_n = dat_size;	\
+	for(_shf_i=0;_shf_i<_shf_n;_shf_i++){	\
+		(rev_array)[(ord_array)[_shf_i]] = _shf_i;	\
+	}	\
+	for(_shf_i=0;_shf_i<_shf_n;_shf_i++){	\
+		_shf_j = (rev_array)[_shf_i];	\
+		while(_shf_j != _shf_i){	\
+			_shf_e = (dat_array)[_shf_j]; (dat_array)[_shf_j] = (dat_array)[_shf_i]; (dat_array)[_shf_i] = _shf_e;	\
+			_shf_t = (rev_array)[_shf_j]; (rev_array)[_shf_j] = _shf_j; _shf_j = _shf_t;	\
+		}	\
+	}	\
+} while(0)
+
 #endif
