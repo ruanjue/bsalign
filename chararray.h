@@ -146,6 +146,22 @@ static inline void trim_string(String *str){
 	str->string[str->size] = 0;
 }
 
+static inline int startswith_string(char *str, char *target){
+	string_size_t len;
+	if(str == NULL || target == NULL) return 0;
+	len = strlen(target);
+	return (strncmp(str, target, len) == 0);
+}
+
+static inline int endswith_string(char *str, char *target){
+	string_size_t siz, len;
+	if(str == NULL || target == NULL) return 0;
+	siz = strlen(str);
+	len = strlen(target);
+	if(siz < len) return 0;
+	return (strncmp(str + siz - len, target, len) == 0);
+}
+
 static inline void trim_vstring(VString *str){
 	string_size_t i;
 	i = str->size - 1;
@@ -313,6 +329,15 @@ static inline string_size_t occ_str(char *str, string_size_t len, char c){
 		if(str[i] == c) ret ++;
 	}
 	return ret;
+}
+
+static inline int is_suffix_str(char *str, char *tok){
+	string_size_t a, b;
+	if(str == NULL || tok == NULL) return 0;
+	a = strlen(str);
+	b = strlen(tok);
+	if(a < b) return 0;
+	return !strncmp(str + a - b, tok, b);
 }
 
 static inline void trunc_string(String *str, string_size_t size){
