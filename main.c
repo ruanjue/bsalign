@@ -1,4 +1,3 @@
-#include "dna.h"
 #include "filereader.h"
 #include "bsalign.h"
 #include "bspoa.h"

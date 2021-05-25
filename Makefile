@@ -3,6 +3,7 @@ RELEASE=20210520
 
 CC  := gcc
 BIN := /usr/local/bin
+HEADCORE := .
 
 ifeq (0, ${MAKELEVEL})
 TIMESTAMP=$(shell date)
@@ -21,7 +22,8 @@ CFLAGS=-g3 -W -Wall -Wno-unused-but-set-variable -O4 -DVERSION="$(VERSION)" -DRE
 endif
 
 GLIBS=-lm -lrt -lpthread -lz
-GENERIC_SRC=mem_share.h chararray.h sort.h list.h pgzf.h sort.h dna.h thread.h filereader.h bitvec.h hashset.h
+GENERIC_SRC=$(HEADCORE)/mem_share.h $(HEADCORE)/chararray.h $(HEADCORE)/sort.h $(HEADCORE)/list.h $(HEADCORE)/pgzf.h $(HEADCORE)/sort.h $(HEADCORE)/dna.h \
+	$(HEADCORE)/thread.h $(HEADCORE)/filereader.h $(HEADCORE)/bitvec.h $(HEADCORE)/hashset.h
 
 PROGS=bsalign
 

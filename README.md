@@ -43,7 +43,7 @@ seqalign_result_t rs = striped_seqedit_pairwise((u1i*)qseq, qlen, (u1i*)tseq, tl
 // perform pairwise kmer-guided edit (2-bits), it is better for two strange reads, because it infers the outline of alignment by kmer-matching-synteny
 seqalign_result_t rs = kmer_striped_seqedit_pairwise(ksize=13, (u1i*)qseq, qlen, (u1i*)tseq, tlen, memp, cigars, verbose);
 // print alignment information
-fprintf(stdout, "QRY\t%d\t%d\tREF\t%d\t%d\tmat=%d\tmis=%d\t%ins=%d\tdel=%d\n", rs.qb, rs.qe, rs.tb, rs.te, rs.mat, rs.mis, rs.ins, rs.del);
+fprintf(stdout, "QRY\t%d\t%d\tREF\t%d\t%d\tmat=%d\tmis=%d\tins=%d\tdel=%d\n", rs.qb, rs.qe, rs.tb, rs.te, rs.mat, rs.mis, rs.ins, rs.del);
 char *alnstr[3];
 alnstr[0] = malloc(rs.aln + 1);
 alnstr[1] = malloc(rs.aln + 1);

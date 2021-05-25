@@ -2,12 +2,12 @@
 #define BANDED_STRIPED_SIMD_RECURRENT_ALIGNMENT_GRAPH_MSA_CNS_RJ_H
 
 #include <math.h>
-#include "headcore/mem_share.h"
-#include "headcore/sort.h"
-#include "headcore/list.h"
-#include "headcore/hashset.h"
-#include "headcore/dna.h"
-#include "headcore/chararray.h"
+#include "mem_share.h"
+#include "sort.h"
+#include "list.h"
+#include "hashset.h"
+#include "dna.h"
+#include "chararray.h"
 #include "bsalign.h"
 
 #if __BYTE_ORDER == 1234
