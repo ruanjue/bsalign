@@ -2,12 +2,12 @@
 #define BANDED_STRIPED_SIMD_RECURRENT_ALIGNMENT_GRAPH_MSA_CNS_RJ_H
 
 #include <math.h>
-#include "mem_share.h"
-#include "sort.h"
-#include "list.h"
-#include "hashset.h"
-#include "dna.h"
-#include "chararray.h"
+#include "headcore/mem_share.h"
+#include "headcore/sort.h"
+#include "headcore/list.h"
+#include "headcore/hashset.h"
+#include "headcore/dna.h"
+#include "headcore/chararray.h"
 #include "bsalign.h"
 
 #if __BYTE_ORDER == 1234
@@ -1548,9 +1548,8 @@ static inline void dump_binary_msa_bspoa(BSPOA *g, char *metadat, u4i metalen, F
 	fwrite(&dtag, 1, 1, out);
 }
 
-// load_binary_msa_bspoa -> print_msa_bspoa -> denoising_msa_bspoa -> print_snp_bspoa
-static inline int load_binary_msa_bspoa(BSPOA *g, FILE *inp, String *metadat){
-	u4i dlen, dcnt, i, j, nseq, mrow;
+static inline int load_binary_msa_bspoa_core(BSPOA *g, FILE *inp, String *metadat){
+	u4i dlen, dcnt, i, nseq, mrow;
 	u1i dtag, *col;
 	clear_bspoa(g);
 	if(metadat) clear_string(metadat);
@@ -1583,13 +1582,9 @@ static inline int load_binary_msa_bspoa(BSPOA *g, FILE *inp, String *metadat){
 					fflush(stdout); fprintf(stderr, " -- read error in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr); return 8;
 				}
 				g->nrds = g->nmsa = nseq = dlen;
-				clear_seqbank(g->seqs);
-				for(i=0;i<nseq;i++){
-					push_seqbank(g->seqs, NULL, 0, NULL, 0);
-				}
 				mrow = nseq + 3;
-				clear_and_encap_u4v(g->msaidxs, dcnt);
-				for(i=0;i<dcnt;i++) push_u4v(g->msaidxs, i);
+				resize_u4v(g->msaidxs, dcnt);
+				for(i=0;i<dcnt;i++) g->msaidxs->buffer[i] = i;
 				resize_u1v(g->msacols, dcnt * mrow);
 				for(i=0;i<dcnt;i++){
 					col = g->msacols->buffer + g->msaidxs->buffer[i] * mrow;
@@ -1597,16 +1592,7 @@ static inline int load_binary_msa_bspoa(BSPOA *g, FILE *inp, String *metadat){
 						fflush(stdout); fprintf(stderr, " -- read error in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr); return 9;
 					}
 				}
-				for(i=0;i<nseq;i++){
-					g->seqs->rdoffs->buffer[i] = g->seqs->rdseqs->size;
-					for(j=0;j<dcnt;j++){
-						col = g->msacols->buffer + g->msaidxs->buffer[j] * mrow;
-						if(col[i] < 4){
-							bit2basebank(g->seqs->rdseqs, col[i]);
-						}
-					}
-					g->seqs->rdlens->buffer[i] = g->seqs->rdseqs->size - g->seqs->rdoffs->buffer[i];
-				}
+				clear_seqbank(g->seqs);
 				resize_u1v(g->qseq, dcnt * 2);
 				if(fread(g->qseq->buffer, 1, dcnt * 2, inp) != dcnt * 2){
 					fflush(stdout); fprintf(stderr, " -- read error in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr); return 10;
@@ -1615,16 +1601,52 @@ static inline int load_binary_msa_bspoa(BSPOA *g, FILE *inp, String *metadat){
 					col = g->msacols->buffer + g->msaidxs->buffer[i] * mrow;
 					col[nseq + 1] = g->qseq->buffer[i];
 					col[nseq + 2] = g->qseq->buffer[dcnt + i];
-					if(col[nseq] < 4){
-						push_u1v(g->cns, col[nseq]);
-						push_u1v(g->qlt, col[nseq + 1]);
-						push_u1v(g->alt, col[nseq + 2]);
-					}
 				}
 				break;
 		}
 	}
 	return EOF;
+}
+
+static inline void post_load_binary_msa_bspoa(BSPOA *g){
+	u4i dcnt, i, j, nseq, mrow;
+	u1i *col;
+	nseq = g->nrds;
+	mrow = nseq + 3;
+	dcnt = g->msaidxs->size;
+	for(i=0;i<nseq;i++){
+		push_seqbank(g->seqs, NULL, 0, NULL, 0);
+	}
+	for(i=0;i<nseq;i++){
+		g->seqs->rdoffs->buffer[i] = g->seqs->rdseqs->size;
+		for(j=0;j<dcnt;j++){
+			col = g->msacols->buffer + g->msaidxs->buffer[j] * mrow;
+			if(col[i] < 4){
+				bit2basebank(g->seqs->rdseqs, col[i]);
+			}
+		}
+		g->seqs->rdlens->buffer[i] = g->seqs->rdseqs->size - g->seqs->rdoffs->buffer[i];
+	}
+	clear_u1v(g->cns);
+	clear_u1v(g->qlt);
+	clear_u1v(g->alt);
+	for(i=0;i<dcnt;i++){
+		col = g->msacols->buffer + g->msaidxs->buffer[i] * mrow;
+		if(col[nseq] < 4){
+			push_u1v(g->cns, col[nseq]);
+			push_u1v(g->qlt, col[nseq + 1]);
+			push_u1v(g->alt, col[nseq + 2]);
+		}
+	}
+}
+
+
+// load_binary_msa_bspoa -> print_msa_bspoa -> denoising_msa_bspoa -> print_snp_bspoa
+static inline int load_binary_msa_bspoa(BSPOA *g, FILE *inp, String *metadat){
+	int ret;
+	ret = load_binary_msa_bspoa(g, inp, metadat);
+	if(ret == 0) post_load_binary_msa_bspoa(g);
+	return ret;
 }
 
 static inline void check_aligned_nodes_bspoa(BSPOA *g){
