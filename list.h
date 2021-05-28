@@ -250,7 +250,7 @@ static inline void resize_##list_type(list_type *list, size_type size){	\
 	clear_and_inc_##list_type(list, size);	\
 }	\
 	\
-static inline void trunc_##list_type(list_type *list, size_type size){	\
+static inline void dec_##list_type(list_type *list, size_type size){	\
 	if(size > count_##list_type(list)) size = count_##list_type(list);	\
 	list->size -= size;	\
 }	\
