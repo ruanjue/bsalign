@@ -37,18 +37,6 @@ typedef struct {
 	cuhash   *hash;
 } PROGOPT;
 
-static inline PROGOPT* init_progopt(){
-	PROGOPT *pg;
-	prog_opt_t *opt;
-	pg = malloc(sizeof(PROGOPT));
-	pg->opts = init_progoptv(4);
-	ZEROS(opt = next_ref_progoptv(pg->opts));
-	opt->opt_tag = "thereisabeautifulworld";
-	opt->opt_req = 0;
-	pg->hash = init_cuhash(11);
-	return pg;
-}
-
 static inline int parse_val_progopt(PROGOPT *pg, u4i optidx, char *valstr, int init){
 	prog_opt_t *opt;
 	char *ptr, *tok;
@@ -151,6 +139,19 @@ static inline u4i add_progopt(PROGOPT *pg, char *tag, u4i parent, int type, char
 		parse_val_progopt(pg, optidx, val, 1);
 	}
 	return parent? parent : optidx;
+}
+
+static inline PROGOPT* init_progopt(){
+	PROGOPT *pg;
+	//prog_opt_t *opt;
+	pg = malloc(sizeof(PROGOPT));
+	pg->opts = init_progoptv(4);
+	pg->hash = init_cuhash(11);
+	add_progopt(pg, "thereisabeautifulworld", 0, PROG_OPT_TYPE_SET, 0, NULL, 0, "howtoyourheart");
+	//ZEROS(opt = next_ref_progoptv(pg->opts));
+	//opt->opt_tag = "thereisabeautifulworld";
+	//opt->opt_req = 0;
+	return pg;
 }
 
 static inline int adds_progopt(PROGOPT *pg, const char *txt){
@@ -319,13 +320,13 @@ static inline int parse_progopt(PROGOPT *pg, int argc, char **argv){
 	return optind;
 }
 
-static inline prog_opt_t* get_progopt(PROGOPT *pg, char *tag){
+static inline prog_opt_t* get_progopt(PROGOPT *pg, char *tag, const char *file, const char *func, const int line){
 	prog_opt_t *opt;
 	u4i optidx;
 	optidx = getval_cuhash(pg->hash, tag);
 	if(optidx == MAX_U4){
-		fflush(stdout); fprintf(stderr, " -- Unknown option '%s' in %s -- %s:%d --\n", tag, __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-		return NULL;
+		fflush(stdout); fprintf(stderr, " -- \e[7mUnknown option '%s' in %s -- %s:%d\e[0m --\n", tag, func, file, line); fflush(stderr);
+		optidx = 0;
 	}
 	opt = ref_progoptv(pg->opts, optidx);
 	if(opt->parent){
@@ -334,17 +335,17 @@ static inline prog_opt_t* get_progopt(PROGOPT *pg, char *tag){
 	return ref_progoptv(pg->opts, optidx);
 }
 
-#define getopt_int(pg, tag) (get_progopt(pg, tag)->val_int)
+#define getopt_int(pg, tag) (get_progopt(pg, tag, __FILE__, __FUNCTION__, __LINE__)->val_int)
 #define OPTINT(tag) getopt_int(opts, tag)
-#define getopt_ints(pg, tag) (get_progopt(pg, tag)->val_ints)
+#define getopt_ints(pg, tag) (get_progopt(pg, tag, __FILE__, __FUNCTION__, __LINE__)->val_ints)
 #define OPTINTS(tag) getopt_ints(opts, tag)
-#define getopt_flt(pg, tag) (get_progopt(pg, tag)->val_flt)
-#define OPTFLT(tag) getopt_flt(opts, tag)
-#define getopt_flts(pg, tag) (get_progopt(pg, tag)->val_flts)
+#define getopt_flt(pg, tag) (get_progopt(pg, tag, __FILE__, __FUNCTION__, __LINE__)->val_flt)
+#define OPTFLT(tag) getopt_flt(opts, tag, __FILE__, __FUNCTION__, __LINE__)
+#define getopt_flts(pg, tag) (get_progopt(pg, tag, __FILE__, __FUNCTION__, __LINE__)->val_flts)
 #define OPTFLTS(tag) getopt_flts(opts, tag)
-#define getopt_str(pg, tag) (get_progopt(pg, tag)->val_str)
+#define getopt_str(pg, tag) (get_progopt(pg, tag, __FILE__, __FUNCTION__, __LINE__)->val_str)
 #define OPTSTR(tag) getopt_str(opts, tag)
-#define getopt_strs(pg, tag) (get_progopt(pg, tag)->val_strs)
+#define getopt_strs(pg, tag) (get_progopt(pg, tag, __FILE__, __FUNCTION__, __LINE__)->val_strs)
 #define OPTSTRS(tag) getopt_strs(opts, tag)
 
 static inline void free_progopt(PROGOPT *pg){
