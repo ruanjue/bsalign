@@ -81,7 +81,7 @@ int usage_poa(){
 	"                       ,varcnt=3,covfrq=0.5,snvqlt=5\n"
 	"              seqcore: number of seqs in core MSA, addtional reads will be realigned (realn > 0) against core MSA profile to build a full MSA\n"
 	"              shuffle: whether to shuffle/sort the reads according to most kmers matches first\n"
-	"              refmode: whether the first sequences is reference sequence, useful in polishing, !NOT IMPLEMENTED!\n"
+	"              refmode: whether the first sequences is reference sequence\n"
 	"              refbonus: base match score on reference will be M + refbonus\n"
 	"              nrec: every query read is aligning against previous <nrec> reads on graph, 0 to all the previous\n"
 	"              trigger: when <trigger> > 0 and <-W> < query length, genrates CNS per after <trigger> reads, and trigger banded alignment\n"
@@ -519,7 +519,8 @@ int main_poa(int argc, char **argv){
 	}
 	end_bspoa(g);
 	for(repn=1;repn<repm;repn++){ // for benchmarking
-		beg_bspoacore(g, NULL, 0);
+		keep_seqs_bspoa(g);
+		beg_bspoa(g);
 		end_bspoa(g);
 	}
 	if(0){
