@@ -3064,8 +3064,8 @@ static inline void add_msanodes_bspoa(BSPOA *g, u4i *rps){
 		del_msanodes_bspoa(g);
 	}
 	nseq = g->nrds;
-	nall = g->seqs->nseq;
-	mrow = g->seqs->nseq + 3;
+	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
+	mrow = nall + 3;
 	mlen = g->msaidxs->size;
 	clen = 0;
 	if(rps == NULL){
@@ -3306,8 +3306,8 @@ static inline void simple_cns_bspoa(BSPOA *g){
 	u2i bcnts[7], brank[7];
 	u1i *qs;
 	nseq = g->nrds;
-	nall = g->seqs->nseq;
-	mrow = g->seqs->nseq + 3;
+	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
+	mrow = nall + 3;
 	mlen = g->msaidxs->size;
 	if(mlen == 0) return;
 	//mask_free_ends_msa_bspoa(g);
@@ -3446,12 +3446,13 @@ static inline double cns_bspoa(BSPOA *g){
 	//bspoavar_t *var;
 	dp_t *dps[5], *dp[5], *lp;
 	double ret, errs[10], errd, erre, p, log10, min_freq_calq;
-	u1i a, b, c, lc, d, e, f, *r, *qs, *ts, *bs[10];
+	u1i *r, *qs, *ts, *bs[10];
+	u4i a, b, c, lc, d, e, f;
 	u4i nseq, nall, mrow, mlen, cpos, rid, *rps, i, mpsize, cnts[6];
 	int pos;
 	min_freq_calq = 0.1;
 	nseq = num_min(g->nmsa, g->nrds);
-	nall = g->seqs->nseq;
+	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
 	mrow = nall + 3;
 	log10 = log(10);
 	mlen = g->msaidxs->size;
@@ -4150,8 +4151,8 @@ static inline void remsa_pedits_bspoa(BSPOA *g, u4i bandwidth, int hpadjust, int
 	u4i qb, qe;
 	u1i *col, *seqs[2], *matrix[5], *mats[2][4], lc;
 	nseq = g->nrds;
-	nall = g->seqs->nseq;
-	mrow = g->seqs->nseq + 3;
+	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
+	mrow = nall + 3;
 	mlen = g->msaidxs->size;
 	if(nseq >= MAX_U1) return;
 	MM_EPI8_ALL0 = mm_set1_epi8(0);
@@ -4510,8 +4511,8 @@ static inline void remsa_edits_bspoa(BSPOA *g, u4i W){
 	u2i *bcnts, *bs, rid;
 	u1i *col, *seqs[2], *matrix, lc;
 	nseq = g->nrds;
-	nall = g->seqs->nseq;
-	mrow = g->seqs->nseq + 3;
+	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
+	mrow = nall + 3;
 	mlen = g->msaidxs->size;
 	W = (W + 1) & (~0x1U); // make sure it is even
 	HW = W >> 1;
@@ -4802,9 +4803,9 @@ static inline void tidy_msa_bspoa(BSPOA *g){
 	u2i bcnts[6], rid;
 	u1i *col, *bss, qlt, alt, lst, lc, gap, m1, m2;
 	nseq = g->nrds;
-	nall = g->seqs->nseq;
+	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
 	realnseq = (nseq && g->seqs->rdlens->size && g->seqs->rdlens->buffer[0])? nseq : nseq - 1;
-	mrow = g->seqs->nseq + 3;
+	mrow = nall + 3;
 	mlen = g->msaidxs->size;
 	void find_top2_bases(int calc_n){
 		memset(bcnts, 0, 6 * sizeof(u2i));
@@ -4898,15 +4899,14 @@ static inline void tidy_msa_bspoa(BSPOA *g){
 static inline void call_snvs_bspoa(BSPOA *g){
 	bspoavar_t *var;
 	u4i nseq, nall, realnseq, mrow, mlen, i, pos, lpos;
-	u2i bcnts[6], rid;
+	u2i bcnts[6], rid, mincov, *acnts;
 	u1i *col, m1, m2;
 	u4i pcnt, j, k, covn, altn, acnt, qual;
-	u2i *acnts;
 	float pmax, pmin, pinc, perr, pexp, prob, *psums;
 	nseq = g->nrds;
-	nall = g->seqs->nseq;
+	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
 	realnseq = (nseq && g->seqs->rdlens->size && g->seqs->rdlens->buffer[0])? nseq : nseq - 1;
-	mrow = g->seqs->nseq + 3;
+	mrow = nall + 3;
 	mlen = g->msaidxs->size;
 	void find_top2_bases(int calc_n){
 		memset(bcnts, 0, 6 * sizeof(u2i));
@@ -4940,10 +4940,11 @@ static inline void call_snvs_bspoa(BSPOA *g){
 	zeros_b1v(g->memp);
 	psums = (float*)g->memp->buffer;
 	acnts = (u2i*)(psums + pcnt);
+	mincov = num_max(2, realnseq * g->par->min_covfrq);
 	for(lpos=pos=0;pos<mlen;pos++){
 		col = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
 		find_top2_bases(0);
-		if(bcnts[m1] + bcnts[m2] >= UInt(realnseq * g->par->min_covfrq)){
+		if(bcnts[m1] + bcnts[m2] >= mincov){
 			covn = bcnts[5];
 			altn = bcnts[m2];
 			acnts[altn * realnseq + covn - 1] ++;
@@ -4990,7 +4991,7 @@ static inline void call_snvs_bspoa(BSPOA *g){
 		col = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
 		find_top2_bases(0);
 		//if(m1 < 4 && m2 < 4 && bcnts[m1] + bcnts[m2] >= UInt(realnseq * g->par->min_covfrq) && bcnts[m2] >= g->par->min_varcnt && bcnts[m2] >= (u4i)(bcnts[5] * g->par->min_varfrq)){
-		if(m1 < 4 && m2 < 4 && bcnts[m2] >= g->par->min_varcnt && bcnts[m1] + bcnts[m2] >= UInt(realnseq * g->par->min_covfrq)){
+		if(m1 < 4 && m2 < 4 && bcnts[m2] >= g->par->min_varcnt && bcnts[m1] + bcnts[m2] >= mincov){
 			qual = - ((prob = cal_binomial_bspoa(bcnts[5], bcnts[m2], pexp)) / log(10));
 			if(qual > 1000) qual = 1000;
 			if(qual >= g->par->min_snvqlt){
@@ -5242,8 +5243,8 @@ static inline float cal_rd_lsp_score_bspoa(BSPOA *g, bspoalsp_t *lsp){
 	u4i nseq, nall, mrow, p, pos, a, b, c, d, f;
 	u1i *col;
 	nseq = g->nrds;
-	nall = g->seqs->nseq;
-	mrow = g->seqs->nseq + 3;
+	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
+	mrow = nall + 3;
 	c = 4;
 	d  = 0;
 	scr = 0;
@@ -5273,8 +5274,8 @@ static inline u4i gen_lsps_bspoa(BSPOA *g, BSPOAPar *par){
 	wsz = 5;
 	if(g->msaidxs->size < wsz) return 0;
 	nseq = g->nrds;
-	nall = g->seqs->nseq;
-	mrow = g->seqs->nseq + 3;
+	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
+	mrow = nall + 3;
 	mpsize = 0;
 	mpsize += roundup_times((1 + 8) * nseq * sizeof(u4i) + nseq * sizeof(u1i), WORDSIZE);
 	clear_and_encap_b1v(g->memp, mpsize);
@@ -5432,8 +5433,8 @@ static inline void remsa_lsps_bspoa(BSPOA *g, BSPOAPar *par){
 	u2i rid, nseq, nall;
 	u1i *col, lc;
 	nseq = g->nrds;
-	nall = g->seqs->nseq;
-	mrow = g->seqs->nseq + 3;
+	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
+	mrow = nall + 3;
 #if DEBUG
 	check_rdnodes_bspoa(g);
 	check_msa_rdseqs_bspoa(g);
@@ -5752,7 +5753,7 @@ static inline u4i subset_bspoa(BSPOA *g, BitVec *rdbits, BSPOA *d){
 	}
 	append_u4v(d->msaidxs, g->msaidxs);
 	mlen = d->msaidxs->size;
-	mrow = d->seqs->nseq + 3;
+	mrow = d->nrds + 3;
 	resize_u1v(d->msacols, mrow * mlen);
 	zeros_u1v(d->msacols);
 	for(pos=0;pos<mlen;pos++){
@@ -5766,7 +5767,7 @@ static inline u4i subset_bspoa(BSPOA *g, BitVec *rdbits, BSPOA *d){
 	cns_bspoa(d);
 	tidy_msa_bspoa(d);
 	call_snvs_bspoa(d);
-	return d->seqs->nseq;
+	return d->nrds;
 }
 
 #if DEBUG
