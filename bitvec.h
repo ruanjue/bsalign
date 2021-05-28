@@ -314,6 +314,20 @@ static inline u8i reg_count_bitvec(BitVec *bitv, u8i beg, u8i end){
 	return cnt;
 }
 
+static inline void reg_print_bitvec(BitVec *bitv, u8i beg, u8i end, FILE *out){
+	u8i i, j, b;
+	char buf[17];
+	for(i=beg;i<end;){
+		b = i;
+		i = num_min(i + 16, end);
+		for(j=b;j<i;j++){
+			buf[j - b] = get_bitvec(bitv, j) + '0';
+		}
+		buf[j - b] = '\0';
+		fputs(buf, out);
+	}
+}
+
 static const int Mod37BitPosition[] = // map a bit value mod 37 to its position
 {
  32,  0,  1, 26,  2, 23, 27,  0,  3, 16,
