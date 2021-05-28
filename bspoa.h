@@ -5050,7 +5050,7 @@ static inline void print_snvs_bspoa(BSPOA *g, char *label, FILE *out){
 			genotypes[rid] = "ACGT-.*"[(int)col[rid]];
 		}
 		genotypes[nseq] = '\0';
-		fprintf(out, "%d\t%s\t%s\t%c\t%d\t%c\t%d\t%s\t%s\t%d\t%d\t%d\t%s\n", var->cpos, flanks[0], flanks[2], bit_base_table[var->refb], var->refn, bit_base_table[var->altb], var->altn, flanks[1], flanks[3], var->covn, var->qual, var->mpos, genotypes);
+		fprintf(out, "%d\t%d\t%s\t%s\t%c\t%d\t%c\t%d\t%s\t%s\t%d\t%d\t%s\n", var->cpos, var->mpos, flanks[0], flanks[2], bit_base_table[var->refb], var->refn, bit_base_table[var->altb], var->altn, flanks[1], flanks[3], var->covn, var->qual, genotypes);
 	}
 }
 
