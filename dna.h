@@ -668,6 +668,22 @@ static inline void seq2basebank(BaseBank *bnk, char *seq, u8i len){
 	}
 }
 
+#define fwdseq2basebank(bnk, seq, len) seq2basebank(bnk, seq, len)
+
+static inline void revseq2basebank(BaseBank *bnk, char *seq, u8i len){
+	char *p;
+	u1i c;
+	p = seq + len;
+	encap_basebank(bnk, len);
+	while(p > seq){
+		p --;
+		c = base_bit_table[(int)*p];
+		c = (~c) & 0x03;
+		bit2bits(bnk->bits, bnk->size, c);
+		bnk->size ++;
+	}
+}
+
 static inline void bitseq2basebank(BaseBank *bnk, u1i *seq, u8i len){
 	u8i idx1, i, c;
 	u1i idx2;
@@ -686,19 +702,23 @@ static inline void bitseq2basebank(BaseBank *bnk, u1i *seq, u8i len){
 	}
 }
 
-#define fwdseq2basebank(bnk, seq, len) seq2basebank(bnk, seq, len)
+#define fwdbitseq2basebank(bnk, seq, len) bitseq2basebank(bnk, seq, len)
 
-static inline void revseq2basebank(BaseBank *bnk, char *seq, u8i len){
-	char *p;
-	u1i c;
-	p = seq + len;
+static inline void revbitseq2basebank(BaseBank *bnk, u1i *seq, u8i len){
+	u8i idx1, i, c;
+	u1i idx2;
 	encap_basebank(bnk, len);
-	while(p > seq){
-		p --;
-		c = base_bit_table[(int)*p];
-		c = (~c) & 0x03;
-		bit2bits(bnk->bits, bnk->size, c);
-		bnk->size ++;
+	idx1 = bnk->size >> 5;
+	idx2 = ((bnk->size) & 0x1FU) << 1;
+	bnk->size += len;
+	if(idx2 == 0) bnk->bits[idx1] = 0;
+	for(i=0;i<len;i++){
+		c = (~seq[len - i]) & 0x3F;
+		bnk->bits[idx1] |= c << (62 - idx2);
+		idx2 = (idx2 + 2) & 0x3F;
+		if(idx2 == 0){
+			bnk->bits[++idx1] = 0;
+		}
 	}
 }
 
@@ -716,6 +736,8 @@ static inline void seq2basebank2(BaseBank *bnk, char *seq, u8i len){
 		p ++;
 	}
 }
+
+#define fwdseq2basebank2(bnk, seq, len) seq2basebank2(bnk, seq, len)
 
 static inline void revseq2basebank2(BaseBank *bnk, char *seq, u8i len){
 	char *p;
@@ -1251,6 +1273,25 @@ static inline void bitseqpush_seqbank(SeqBank *sb, char *tag, int tag_len, u1i *
 	push_cplist(sb->rdtags, ptr);
 	push_u8v(sb->rdoffs, sb->rdseqs->size);
 	bitseq2basebank(sb->rdseqs, seq, len);
+	push_u4v(sb->rdlens, len);
+	if(ptr) put_cuhash(sb->rdhash, (cuhash_t){ptr, sb->nseq});
+	sb->nseq ++;
+}
+
+#define fwdbitseqpush_seqbank(sb, tag, tag_len, seq, len) bitseqpush_seqbank(sb, tag, tag_len, seq, len)
+
+static inline void revbitseqpush_seqbank(SeqBank *sb, char *tag, int tag_len, u1i *seq, u4i len){
+	char *ptr;
+	if(tag && tag_len){
+		ptr = malloc(tag_len + 1);
+		memcpy(ptr, tag, tag_len);
+		ptr[tag_len] = 0;
+	} else {
+		ptr = NULL;
+	}
+	push_cplist(sb->rdtags, ptr);
+	push_u8v(sb->rdoffs, sb->rdseqs->size);
+	revbitseq2basebank(sb->rdseqs, seq, len);
 	push_u4v(sb->rdlens, len);
 	if(ptr) put_cuhash(sb->rdhash, (cuhash_t){ptr, sb->nseq});
 	sb->nseq ++;
