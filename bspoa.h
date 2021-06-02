@@ -4857,9 +4857,9 @@ static inline void tidy_msa_bspoa(BSPOA *g){
 	for(pos=0;pos<mlen;pos++){
 		col = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
 		qlt = col[nall + 2];
-		if(pos == 12061){
-			fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-		}
+		//if(pos == 12061){
+			//fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+		//}
 		if(qlt < g->par->althi) continue;
 		find_top2_bases(1);
 		alt = 4; gap = 0;
