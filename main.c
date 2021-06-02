@@ -614,7 +614,7 @@ int main_cat(int argc, char **argv){
 		} else {
 			RS = cat_cns_seqs(joints, cns, ctg, ol, mempool, cigars, M, X, O, E);
 			if(verbose){
-				seqalign_cigar2alnstr_print("CNS", cns->buffer, cns->size, seq->tag->string, ctg->buffer, ctg->size, &RS, cigars, stderr);
+				seqalign_cigar2alnstr_print("CNS", cns->buffer, cns->size, seq->tag->string, ctg->buffer, ctg->size, &RS, cigars, 0, stderr);
 				fprintf(stderr, "JOINT\t%d\t%d\t%d\t%d\n", Int(cns->size), joints[0], Int(ctg->size), Int(ctg->size) - joints[1]);
 				fflush(stderr);
 			}
