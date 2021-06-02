@@ -570,12 +570,29 @@ static inline u4i seqalign_cigar2alnstr(u1i *qseq, u1i *tseq, seqalign_result_t 
 	return z;
 }
 
-static inline void seqalign_cigar2alnstr_print(char *qtag, u1i *qseq, u4i qlen, char *ttag, u1i *tseq, u4i tlen,seqalign_result_t *rs, u4v *cigars, FILE *out){
+static inline void seqalign_cigar2alnstr_print(char *qtag, u1i *qseq, u4i qlen, char *ttag, u1i *tseq, u4i tlen, seqalign_result_t *rs, u4v *cigars, int linewidth, FILE *out){
 	char *alnstr[3];
 	alnstr[0] = alnstr[1] = alnstr[2] = NULL;
 	seqalign_cigar2alnstr(qseq, tseq, rs, cigars, alnstr, 0);
 	fprintf(out, "%s\t%d\t%d\t%d\t%s\t%d\t%d\t%d\t%d\t%0.3f\t%d\t%d\t%d\t%d\n", qtag, qlen, rs->qb, rs->qe, ttag, tlen, rs->tb, rs->te, rs->score, 1.0 * rs->mat / num_max(rs->aln, 1), rs->mat, rs->mis, rs->ins, rs->del);
-	fprintf(out, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
+	if(linewidth <= 0){
+		fprintf(out, "%s\n%s\n%s\n", alnstr[0], alnstr[2], alnstr[1]);
+	} else {
+		int i, b, e, qn, tn;
+		char tmp;
+		qn = rs->qb;
+		tn = rs->tb;
+		for(b=0;b<rs->aln;b+=100){
+			e = num_min(b + 100, rs->aln);
+			for(i=b;i<e;i++){
+				if(alnstr[0][i] != '-') qn ++;
+				if(alnstr[1][i] != '-') tn ++;
+			}
+			tmp = alnstr[0][e]; alnstr[0][e] = 0; fprintf(stdout, "%s\tQ[%d]\n", alnstr[0] + b, qn); alnstr[0][e] = tmp;
+			tmp = alnstr[2][e]; alnstr[2][e] = 0; fprintf(stdout, "%s\n",     alnstr[2] + b); alnstr[2][e] = tmp;
+			tmp = alnstr[1][e]; alnstr[1][e] = 0; fprintf(stdout, "%s\tT[%d]\n", alnstr[1] + b, tn); alnstr[1][e] = tmp;
+		}
+	}
 	free(alnstr[0]);
 	free(alnstr[1]);
 	free(alnstr[2]);
