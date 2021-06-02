@@ -3396,6 +3396,11 @@ static inline double cal_binomial_bspoa(u4i n, u4i m, double p){
 	return log(p) * m + log(1 - p) * (n - m) + cal_permutation_bspoa(n, m);
 }
 
+#define BS_M_SQRT2 1.4142135623731
+static inline double cal_normalCDF_bspoa(double value){
+	return erfc(- value / BS_M_SQRT2) / 2;
+}
+
 static inline double sum_log_nums(int cnt, double *vals){
 	double delta, sum;
 	int i;
@@ -3448,10 +3453,11 @@ static inline double cns_bspoa(BSPOA *g){
 	double ret, errs[10], errd, erre, p, log10, min_freq_calq;
 	u1i *r, *qs, *ts, *bs[10];
 	u4i a, b, c, lc, d, e, f;
-	u4i nseq, nall, mrow, mlen, cpos, rid, *rps, i, mpsize, cnts[6];
+	u4i nseq, nmax, nall, mrow, mlen, cpos, rid, *rps, i, mpsize, cnts[6];
 	int pos;
 	min_freq_calq = 0.1;
 	nseq = num_min(g->nmsa, g->nrds);
+	nmax = g->nrds;
 	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
 	mrow = nall + 3;
 	log10 = log(10);
@@ -3590,10 +3596,14 @@ static inline double cns_bspoa(BSPOA *g){
 		if(print_probs){
 			fprintf(stdout, "[QLT%04d]\t%c\t%0.2f\t%f\t%f\t%f\t%f\t%f\t=%f\n", pos, "ACGT-"[c], erre, dps[0][pos].sc[5], dps[1][pos].sc[5], dps[2][pos].sc[5], dps[3][pos].sc[5], dps[4][pos].sc[5], sum_log_nums(5, errs));
 		}
+		// cns quality
 		qs[nall + 1] = (int)num_min(erre, BSPOA_QLT_MAX);
 		if(1){
+			//if(pos == 12061){
+				//fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+			//}
 			memset(cnts, 0, 6 * sizeof(u4i));
-			for(rid=0;rid<nseq;rid++){
+			for(rid=0;rid<nmax;rid++){
 				b = qs[rid];
 				if(b > 4) continue;
 				cnts[5] ++;
@@ -3620,8 +3630,22 @@ static inline double cns_bspoa(BSPOA *g){
 				p = g->par->psub;
 			}
 			erre = 0;
-			for(e=0;e<cnts[a];e++){
-				erre += exp(cal_binomial_bspoa(cnts[5], e, p));
+			if(cnts[5] > 50 && cnts[5] * p > 5 && cnts[5] * (1 - p) > 5){
+				if(0){
+					for(e=0;e<cnts[a];e++){
+						erre += exp(cal_binomial_bspoa(cnts[5], e, p));
+					}
+					double stdv = sqrt(cnts[5] * p * (1 - p));
+					double perr = (cnts[a] - cnts[5] * p) / stdv;
+					double errf = cal_normalCDF_bspoa(perr);
+					fflush(stdout); fprintf(stdout, " --  [%d]\t%d\t%d\t%f\tNORMAL:%f\t%f in %s -- %s:%d --\n", pos, cnts[5], cnts[a], erre, perr, errf, __FUNCTION__, __FILE__, __LINE__); fflush(stdout);
+				} else {
+					erre = cal_normalCDF_bspoa((cnts[a] - cnts[5] * p) / sqrt(cnts[5] * p * (1- p)));
+				}
+			} else {
+				for(e=0;e<cnts[a];e++){
+					erre += exp(cal_binomial_bspoa(cnts[5], e, p));
+				}
 			}
 			if(erre == 0){
 				errd = 0;
@@ -4801,7 +4825,7 @@ static inline void fix_tenon_mortise_msa_bspoa2(BSPOA *g){
 static inline void tidy_msa_bspoa(BSPOA *g){
 	u4i nseq, nall, realnseq, mrow, mlen, i, pos, lpos, e, f;
 	u2i bcnts[6], rid;
-	u1i *col, *bss, qlt, alt, lst, lc, gap, m1, m2;
+	u1i *col, *bss, qlt, alt, lst, lc, lq, gap, m1, m2;
 	nseq = g->nrds;
 	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
 	realnseq = (nseq && g->seqs->rdlens->size && g->seqs->rdlens->buffer[0])? nseq : nseq - 1;
@@ -4829,15 +4853,14 @@ static inline void tidy_msa_bspoa(BSPOA *g){
 			}
 		}
 	}
-	bss = NULL; lst = 0; lc = 4; lpos = MAX_U4;
+	bss = NULL; lst = 0; lc = 4; lq = 0; lpos = MAX_U4;
 	for(pos=0;pos<mlen;pos++){
 		col = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
-		qlt = col[nall + 1];
-		alt = col[nall + 2];
-		//if(lpos == 5564){
-			//fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
-		//}
-		if(alt < g->par->althi) continue;
+		qlt = col[nall + 2];
+		if(pos == 12061){
+			fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+		}
+		if(qlt < g->par->althi) continue;
 		find_top2_bases(1);
 		alt = 4; gap = 0;
 		if(m1 == 4 && bcnts[m2]){
@@ -4850,7 +4873,7 @@ static inline void tidy_msa_bspoa(BSPOA *g){
 		if(alt == 4 || gap < Int(0.1 * bcnts[5]) || bcnts[alt] < Int(0.1 * bcnts[5])) continue;
 		if(lpos == MAX_U4){
 		} else if(alt == lc){
-			if(gap < lst) continue;
+			if(qlt < lq) continue;
 		} else if(num_min(bcnts[alt], lst) >= Int(0.75 * bcnts[alt])){
 			e = lpos;
 			while(e < pos){
@@ -4886,12 +4909,12 @@ static inline void tidy_msa_bspoa(BSPOA *g){
 							col[rid] = 4;
 						}
 					}
-					lpos = MAX_U4; lst = 0; lc = 4;
+					lpos = MAX_U4; lst = 0; lc = 4; lq = 0;
 					continue;
 				}
 			}
 		}
-		lpos = pos; lst = gap; lc = alt;
+		lpos = pos; lst = gap; lc = alt; lq = qlt;
 	}
 	cns_bspoa(g);
 }
