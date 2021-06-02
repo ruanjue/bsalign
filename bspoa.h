@@ -4690,18 +4690,18 @@ static inline void end_bspoa(BSPOA *g){
 	seqalign_result_t rs;
 	int i;
 	u2i rid;
+	clear_u1v(g->cns);
+	clear_u1v(g->qlt);
+	clear_u1v(g->alt);
+	if(g->par->refmode){
+		resize_u1v(g->cns, g->seqs->rdlens->buffer[0]);
+		resize_u1v(g->qlt, g->seqs->rdlens->buffer[0]);
+		resize_u1v(g->alt, g->seqs->rdlens->buffer[0]);
+		bitseq_basebank(g->seqs->rdseqs, g->seqs->rdoffs->buffer[0], g->seqs->rdlens->buffer[0], g->cns->buffer);
+		memset(g->qlt->buffer, 0, g->seqs->rdlens->buffer[0]);
+		memset(g->alt->buffer, 0, g->seqs->rdlens->buffer[0]);
+	}
 	if(g->seqs->nseq <= 1){
-		clear_u1v(g->cns);
-		clear_u1v(g->qlt);
-		clear_u1v(g->alt);
-		if(g->par->refmode && g->seqs->nseq == 1){
-			resize_u1v(g->cns, g->seqs->rdlens->buffer[0]);
-			resize_u1v(g->qlt, g->seqs->rdlens->buffer[0]);
-			resize_u1v(g->alt, g->seqs->rdlens->buffer[0]);
-			bitseq_basebank(g->seqs->rdseqs, g->seqs->rdoffs->buffer[0], g->seqs->rdlens->buffer[0], g->cns->buffer);
-			memset(g->qlt->buffer, 0, g->seqs->rdlens->buffer[0]);
-			memset(g->alt->buffer, 0, g->seqs->rdlens->buffer[0]);
-		}
 		return;
 	}
 	if(g->par->shuffle) shuffle_reads_by_kmers_bspoa(g);
