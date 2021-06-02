@@ -1358,6 +1358,7 @@ static inline void str_cns_ruler_bspoacore(BSPOA *g, u4i mbeg, u4i mend, u4i cbe
 }
 
 static inline void str_msa_ruler_bspoacore(BSPOA *g, u4i mbeg, u4i mend, int colorful){
+	bspoavar_t *x;
 	u4i i, j;
 	char *cp;
 	UNUSED(colorful);
@@ -1375,6 +1376,14 @@ static inline void str_msa_ruler_bspoacore(BSPOA *g, u4i mbeg, u4i mend, int col
 		}
 	}
 	cp[0] = 0;
+	cp = g->strs->string;
+	for(i=0;i<g->var->size;i++){
+		x = ref_bspoavarv(g->var, i);
+		if(x->mpos >= mend) break;
+		if(x->mpos >= mbeg){
+			cp[x->mpos - mbeg] = '~';
+		}
+	}
 	g->strs->size = mend - mbeg;
 }
 
@@ -4824,8 +4833,8 @@ static inline void fix_tenon_mortise_msa_bspoa2(BSPOA *g){
 
 static inline void tidy_msa_bspoa(BSPOA *g){
 	u4i nseq, nall, realnseq, mrow, mlen, i, pos, lpos, e, f;
-	u2i bcnts[6], rid;
-	u1i *col, *bss, qlt, alt, lst, lc, lq, gap, m1, m2;
+	u2i bcnts[6], rid, gap, lst;
+	u1i *col, *bss, qlt, alt, lc, lq, m1, m2;
 	nseq = g->nrds;
 	nall = (g->seqs->nseq == 0)? nseq : g->seqs->nseq;
 	realnseq = (nseq && g->seqs->rdlens->size && g->seqs->rdlens->buffer[0])? nseq : nseq - 1;
@@ -4857,7 +4866,7 @@ static inline void tidy_msa_bspoa(BSPOA *g){
 	for(pos=0;pos<mlen;pos++){
 		col = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
 		qlt = col[nall + 2];
-		//if(pos == 12061){
+		//if(pos == 1494){
 			//fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
 		//}
 		if(qlt < g->par->althi) continue;
@@ -4874,7 +4883,7 @@ static inline void tidy_msa_bspoa(BSPOA *g){
 		if(lpos == MAX_U4){
 		} else if(alt == lc){
 			if(qlt < lq) continue;
-		} else if(num_min(bcnts[alt], lst) >= Int(0.75 * bcnts[alt])){
+		} else if(lst >= Int(0.75 * bcnts[alt])){
 			e = lpos;
 			while(e < pos){
 				bss = g->msacols->buffer + g->msaidxs->buffer[e + 1] * mrow;
