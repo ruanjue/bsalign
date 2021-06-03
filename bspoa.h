@@ -5048,6 +5048,8 @@ static inline void call_snvs_bspoa(BSPOA *g){
 	}
 }
 
+#define call_snv_bspoa(g) call_snvs_bspoa(g)
+
 static inline void print_snvs_bspoa(BSPOA *g, char *label, FILE *out){
 	bspoavar_t *var;
 	u4i i, j, fsz, fct, rid, nseq, mrow, mlen;
@@ -5758,14 +5760,12 @@ static inline u4i subset_bspoa(BSPOA *g, BitVec *rdbits, BSPOA *d){
 		d->nrds ++;
 	}
 	d->nmsa = d->nrds;
-	if(0){
-		// copy seqs
-		for(rid=0;rid<g->seqs->nseq;rid++){
-			if(get_bitvec(rdbits, rid) == 0) continue;
-			rdoff = g->seqs->rdoffs->buffer[rid];
-			rdlen = g->seqs->rdlens->buffer[rid];
-			fwdbitpush_bspoa(d, g->seqs->rdseqs->bits, rdoff, rdlen);
-		}
+	// copy seqs
+	for(rid=0;rid<g->seqs->nseq;rid++){
+		if(get_bitvec(rdbits, rid) == 0) continue;
+		rdoff = g->seqs->rdoffs->buffer[rid];
+		rdlen = g->seqs->rdlens->buffer[rid];
+		fwdbitpush_bspoa(d, g->seqs->rdseqs->bits, rdoff, rdlen);
 	}
 	if(0){
 		// copy nodes
@@ -5797,9 +5797,40 @@ static inline u4i subset_bspoa(BSPOA *g, BitVec *rdbits, BSPOA *d){
 		}
 	}
 	cns_bspoa(d);
-	tidy_msa_bspoa(d);
-	call_snvs_bspoa(d);
 	return d->nrds;
+}
+
+static inline void clip_reads_msa_bspoa_core(BSPOA *g, u4i *roffs, u4i *rbegs, u4i *rends){
+	u4i pos, i, nseq, mlen, mrow;
+	u1i *col;
+	nseq = g->nrds;
+	mrow = g->seqs->nseq + 3;
+	mlen = g->msaidxs->size;
+	for(pos=0;pos<mlen;pos++){
+		col = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
+		for(i=0;i<nseq;i++){
+			if(col[i] < 4) roffs[i] ++;
+			if(roffs[i] <= rbegs[i] || roffs[i] > rends[i]){
+				col[i] = 5;
+			}
+		}
+	}
+}
+
+static inline void clip_reads_msa_bspoa(BSPOA *g, u4i clip_head, u4i clip_tail){
+	u4i *roffs, *rbegs, *rends, nseq, i;
+	if(clip_head + clip_tail == 0) return;
+	nseq = g->nrds;
+	resize_u4v(g->stack, nseq);
+	zeros_u4v(g->stack);
+	roffs = g->stack->buffer;
+	encap_b4v(g->rdregs[0], nseq);
+	rbegs = (u4i*)g->rdregs[0]->buffer;
+	encap_b4v(g->rdregs[1], nseq);
+	rends = (u4i*)g->rdregs[1]->buffer;
+	for(i=0;i<nseq;i++) rbegs[i] = clip_head;
+	for(i=0;i<nseq;i++) rends[i] = num_max(g->seqs->rdlens->buffer[i], clip_tail) - clip_tail;
+	clip_reads_msa_bspoa_core(g, roffs, rbegs, rends);
 }
 
 #if DEBUG
