@@ -1679,7 +1679,7 @@ static inline void post_load_binary_msa_bspoa(BSPOA *g){
 // load_binary_msa_bspoa -> print_msa_bspoa -> denoising_msa_bspoa -> print_snp_bspoa
 static inline int load_binary_msa_bspoa(BSPOA *g, FILE *inp, String *metadat){
 	int ret;
-	ret = load_binary_msa_bspoa(g, inp, metadat);
+	ret = load_binary_msa_bspoa_core(g, inp, metadat);
 	if(ret == 0) post_load_binary_msa_bspoa(g);
 	return ret;
 }
