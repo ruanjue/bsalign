@@ -1217,7 +1217,7 @@ static inline seqalign_result_t kmer_striped_seqedit_pairwise(u1i ksz, u1i *qseq
 	clear_b1v(mempool);
 //#define LOCAL_DEBUG
 	do {
-		cmin = num_min(qlen, tlen) * 0.05;
+		cmin = num_min(qlen, tlen) * 0.05 + 1;
 		cmin = num_min(cmin, 2 * ksz);
 		typedef struct { u4i kflg:1, kmer:30, kdir:1, koff; } _tmp_kmer_t;
 		typedef struct { _tmp_kmer_t kmers[2]; } _tmp_khit_t;
