@@ -5800,6 +5800,56 @@ static inline u4i subset_bspoa(BSPOA *g, BitVec *rdbits, BSPOA *d){
 	return d->nrds;
 }
 
+static inline void calc_msa_rdregs_bspoa(BSPOA *g, u4i *rbegs, u4i *rends){
+	u4i pos, i, nseq, mlen, mrow;
+	u1i *col;
+	nseq = g->nrds;
+	mrow = g->seqs->nseq + 3;
+	mlen = g->msaidxs->size;
+	for(i=0;i<nseq;i++){
+		if(g->seqs->rdlens->buffer[i] == 0){
+			rbegs[i] = rends[i] = 0;
+			continue;
+		}
+		for(pos=0;pos<mlen;pos++){
+			col = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
+			if(col[i] < 4) break;
+		}
+		rbegs[i] = pos;
+		for(pos=mlen;pos;pos--){
+			col = g->msacols->buffer + g->msaidxs->buffer[pos - 1] * mrow;
+			if(col[i] < 4) break;
+		}
+		rends[i] = pos;
+	}
+}
+
+static inline void calc_cns_rdregs_bspoa(BSPOA *g, u4i *rbegs, u4i *rends){
+	u4i pos, i, j, nseq, mlen, mrow;
+	u1i *col;
+	nseq = g->nrds;
+	mrow = g->seqs->nseq + 3;
+	mlen = g->msaidxs->size;
+	for(i=0;i<nseq;i++){
+		if(g->seqs->rdlens->buffer[i] == 0){
+			rbegs[i] = rends[i] = 0;
+			continue;
+		}
+		for(pos=j=0;pos<mlen;pos++){
+			col = g->msacols->buffer + g->msaidxs->buffer[pos] * mrow;
+			if(col[i] < 4) break;
+			if(col[nseq] < 4) j ++;
+		}
+		rbegs[i] = j;
+		for(j=0,pos=mlen;pos;pos--){
+			col = g->msacols->buffer + g->msaidxs->buffer[pos - 1] * mrow;
+			if(col[i] < 4) break;
+			if(col[nseq] < 4) j ++;
+		}
+		rends[i] = g->cns->size - j;
+	}
+}
+
 static inline void clip_reads_msa_bspoa_core(BSPOA *g, u4i *roffs, u4i *rbegs, u4i *rends){
 	u4i pos, i, nseq, mlen, mrow;
 	u1i *col;
