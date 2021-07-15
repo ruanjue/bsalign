@@ -340,7 +340,7 @@ static inline prog_opt_t* get_progopt(PROGOPT *pg, char *tag, const char *file, 
 #define getopt_ints(pg, tag) (get_progopt(pg, tag, __FILE__, __FUNCTION__, __LINE__)->val_ints)
 #define OPTINTS(tag) getopt_ints(opts, tag)
 #define getopt_flt(pg, tag) (get_progopt(pg, tag, __FILE__, __FUNCTION__, __LINE__)->val_flt)
-#define OPTFLT(tag) getopt_flt(opts, tag, __FILE__, __FUNCTION__, __LINE__)
+#define OPTFLT(tag) getopt_flt(opts, tag)
 #define getopt_flts(pg, tag) (get_progopt(pg, tag, __FILE__, __FUNCTION__, __LINE__)->val_flts)
 #define OPTFLTS(tag) getopt_flts(opts, tag)
 #define getopt_str(pg, tag) (get_progopt(pg, tag, __FILE__, __FUNCTION__, __LINE__)->val_str)

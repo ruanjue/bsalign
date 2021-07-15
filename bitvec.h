@@ -48,7 +48,7 @@ typedef struct {
 	u8i *hash;
 	u8i hash_size;
 	u8i hash_mod;
-	int64_t iter_idx;
+	b8i iter_idx;
 } BitVec;
 
 #if 0
@@ -152,24 +152,6 @@ static inline BitVec* load_bitvec(FILE *inp){
 	return bitv;
 }
 
-#if 0
-static inline BitVec* mem_load_bitvec(void *mem, FILE *inp){
-	BitVec *bitv;
-	size_t off, n;
-	bitv = mem;
-	off = ((sizeof(BitVec) + 7) / 8) * 8;
-	if((n = fread(&bitv->n_bit, sizeof(u8i), 1, inp)) != 1) return NULL;
-	if((n = fread(&bitv->n_cap, sizeof(u8i), 1, inp)) != 1) return NULL;
-	bitv->sums = NULL;
-	bitv->hash = NULL;
-	bitv->hash_size = 0;
-	bitv->bits = mem + off;
-	off += (bitv->n_cap / 64) * 8;
-	if((n = fread(bitv->bits, sizeof(u8i), bitv->n_cap / 64, inp)) != bitv->n_cap / 64) return NULL;
-	return bitv;
-}
-#endif
-
 static inline void clear_bitvec(BitVec *bitv){ bitv->n_bit = 0; }
 
 static inline void zeros_bitvec(BitVec *bitv){ memset(bitv->bits, 0, bitv->n_cap / 8); }
@@ -178,7 +160,7 @@ static inline void zeros_bitvec(BitVec *bitv){ memset(bitv->bits, 0, bitv->n_cap
 static inline void reg_zeros_bitvec(BitVec *bitv, u8i beg, u8i end){
 	u8i b, e;
 	if(beg >= end) return;
-	encap_bitvec(bitv, end);
+	if(end > bitv->n_bit) encap_bitvec(bitv, end - bitv->n_bit);
 	b = beg >> 6;
 	e = end >> 6;
 	if(b == e){
@@ -196,7 +178,7 @@ static inline void ones_bitvec(BitVec *bitv){ memset(bitv->bits, 0xFFU, bitv->n_
 static inline void reg_ones_bitvec(BitVec *bitv, u8i beg, u8i end){
 	u8i b, e;
 	if(beg >= end) return;
-	encap_bitvec(bitv, end);
+	if(end > bitv->n_bit) encap_bitvec(bitv, end - bitv->n_bit);
 	b = beg >> 6;
 	e = end >> 6;
 	if(b == e){
@@ -218,15 +200,27 @@ static inline void zero_bitvec(BitVec *bitv, u8i idx){ bitv->bits[idx>>6] &= ~(1
 
 static inline void zero64_bitvec(BitVec *bitv, u8i idx){ bitv->bits[idx>>6] = 0; }
 
-static inline void set_bitvec(BitVec *bitv, u8i idx, int v){
-	if(v){
-		one_bitvec(bitv, idx);
-	} else {
-		zero_bitvec(bitv, idx);
+static inline u8i set_bit_bit64(u8i v, int shift, u1i b){
+#if DEBUG
+	if(b >> 1){
+		fflush(stdout); fprintf(stderr, " -- something wrong in %s -- %s:%d --\n", __FUNCTION__, __FILE__, __LINE__); fflush(stderr);
+		abort();
 	}
+#endif
+	v &= ~(1LLU << shift);
+	v |= ((u8i)b) << shift;
+	return v;
 }
 
-static inline u8i get_bitvec(BitVec *bitv, u8i idx){ return (bitv->bits[idx>>6] >> (idx&0x3FU)) & 0x01LLU; }
+static inline void set_bitvec(BitVec *bitv, u8i idx, u1i b){
+	u8i *vp;
+	vp = bitv->bits + (idx >> 6);
+	vp[0] = set_bit_bit64(vp[0], idx & 0x3FU, b);
+}
+
+#define get_bit_bit64(v, shift) (((v) >> (shift)) & 0x1LLU)
+
+static inline u8i get_bitvec(BitVec *bitv, u8i idx){ return get_bit_bit64(bitv->bits[idx >> 6], idx & 0x3FU); }
 
 static inline u8i get64_bitvec(BitVec *bitv, u8i off){
 	u8i m, n;
@@ -269,6 +263,10 @@ static inline void one2bitvec(BitVec *bitv){ encap_bitvec(bitv, 1); one_bitvec(b
 
 static inline void zero2bitvec(BitVec *bitv){ encap_bitvec(bitv, 1); zero_bitvec(bitv, bitv->n_bit); bitv->n_bit ++; }
 
+static inline void push_bitvec(BitVec *bitv, int v){ encap_bitvec(bitv, 1); set_bitvec(bitv, bitv->n_bit, v); bitv->n_bit ++; }
+
+static inline void lazypush_bitvec(BitVec *bitv, int v){ set_bitvec(bitv, bitv->n_bit, v); bitv->n_bit ++; }
+
 static inline u8i get_2bitvec(BitVec *bitv, u8i idx){ return (bitv->bits[idx>>5] >> ((idx&0x1FU) << 1)) & 0x03LLU; }
 
 static inline void set_2bitvec(BitVec *bitv, u8i idx, u8i v){
@@ -283,35 +281,70 @@ static inline void push_2bitvec(BitVec *bitv, u8i v){
 
 static inline void end_bitvec(BitVec *bitv){ encap_bitvec(bitv, 1); one_bitvec(bitv, bitv->n_bit); }
 
-static inline u8i next_one_bitvec(BitVec *bitv, u8i idx){
+static inline u8i next_one_bits64(u8i *bits, u8i idx){
 	register u8i p, v;
 	register u4i s;
 	p = idx >> 6;
 	s = idx & 0x3F;
-	while(!(bitv->bits[p] >> s)){ p ++; s = 0; }
-	v = bitv->bits[p] >> s;
+	while(!(bits[p] >> s)){ p ++; s = 0; }
+	v = bits[p] >> s;
 	s += __builtin_ctzll(v);
 	return (p << 6) + s;
 }
 
-static inline u8i reg_count_bitvec(BitVec *bitv, u8i beg, u8i end){
+// when come to the bit64, find the targeting bit from end to beg
+static u8i next_ones_bits64(u8i *bits, u8i idx, u8i cnt){
+	register u8i p;
+	register u4i s, n;
+	p = idx >> 6;
+	s = idx & 0x3F;
+	//cnt = count_ones_bit64(bits[p] & (~(MAX_U8 << s)));
+	while(1){
+		n = count_ones_bit64(bits[p]);
+		if(n < cnt){
+			cnt -= n;
+			p ++;
+		} else {
+			s += __builtin_ctzll(bits[p] >> s);
+			while(cnt){
+				s ++;
+				if((bits[p] >> s) & 0x1) cnt --;
+			}
+			return (p << 6) + s;
+		}
+	}
+}
+
+static inline u8i next_one_bitvec(BitVec *bitv, u8i idx){
+	return next_one_bits64(bitv->bits, idx);
+}
+
+static inline u8i next_ones_bitvec(BitVec *bitv, u8i idx, u8i cnt){
+	return next_ones_bits64(bitv->bits, idx, cnt);
+}
+
+static inline u8i reg_count_bits64(u8i *bits, u8i beg, u8i end){
 	u8i cnt, b, e, t;
 	if(beg >= end) return 0;
 	b = beg >> 6;
 	e = end >> 6;
 	if(b == e){
-		t = (bitv->bits[b] & (MAX_U8 >> (64 - (end & 0x3F)))) >> (beg & 0x3F);
+		t = (bits[b] & (MAX_U8 >> (64 - (end & 0x3F)))) >> (beg & 0x3F);
 		cnt = count_ones_bit64(t);
 	} else {
-		cnt = count_ones_bit64(bitv->bits[b] >> (beg & 0x3F));
-		while(++b < e){
-			cnt += count_ones_bit64(bitv->bits[b]);
+		cnt = count_ones_bit64(bits[b] >> (beg & 0x3F));
+		while(++ b < e){
+			cnt += count_ones_bit64(bits[b]);
 		}
 		if(end & 0x3F){
-			cnt += count_ones_bit64(bitv->bits[b] & (MAX_U8 >> (64 - (end & 0x3F))));
+			cnt += count_ones_bit64(bits[b] & (MAX_U8 >> (64 - (end & 0x3F))));
 		}
 	}
 	return cnt;
+}
+
+static inline u8i reg_count_bitvec(BitVec *bitv, u8i beg, u8i end){
+	return reg_count_bits64(bitv->bits, beg, end);
 }
 
 static inline void reg_print_bitvec(BitVec *bitv, u8i beg, u8i end, FILE *out){
@@ -422,7 +455,7 @@ static inline u8i rank_bitvec(BitVec *bitv, u8i idx){
 	return sum;
 }
 
-static inline u1i select_8bytes(u8i word, u1i n_one){
+static inline u1i select_bit64(u8i word, u1i n_one){
 	u1i idx, n, m;
 	n = count_ones_bit32((u4i)word);
 	if(n >= n_one){
@@ -475,7 +508,7 @@ static inline u8i select_bitvec(BitVec *bitv, u8i idx){
 	}
 	p = p * 8 + i;
 	s = idx - t;
-	return p * 64 + select_8bytes(bitv->bits[p], s);
+	return p * 64 + select_bit64(bitv->bits[p], s);
 }
 
 static inline void begin_iter_bitvec(BitVec *bitv){ bitv->iter_idx = -1; }
@@ -492,42 +525,5 @@ static inline void free_bitvec(BitVec *bitv){
 	if(bitv->hash) free(bitv->hash);
 	free(bitv);
 }
-
-#if 0
-
-static inline size_t mem_size_bitvec(BitVec *bitv){
-	size_t m;
-	m = (sizeof(BitVec) + 7) / 8 * 8 + ((bitv->n_cap / 64) * 8);
-	if(bitv->sums){
-		m += (bitv->sum_size * 2 + 1) * 8;
-	}
-	if(bitv->hash){
-		m += bitv->hash_size * 8;
-	}
-	return m;
-}
-
-static inline size_t mem_dump_bitvec(BitVec *bitv, void *mem){
-	BitVec *clone;
-	size_t off;
-	clone = mem;
-	memcpy(clone, bitv, sizeof(BitVec));
-	off = ((sizeof(BitVec) + 7) / 8) * 8;
-	clone->bits = mem + off;
-	memcpy(clone->bits, bitv->bits, (bitv->n_cap / 64) * 8);
-	off += (bitv->n_cap / 64) * 8;
-	if(bitv->sums){
-		clone->sums = mem + off;
-		memcpy(clone->sums, bitv->sums, (bitv->sum_size * 2 + 1) * 8);
-		off += (bitv->sum_size * 2 + 1) * 8;
-	}
-	if(bitv->hash){
-		clone->hash = mem + off;
-		memcpy(clone->hash, bitv->hash, bitv->hash_size * 8);
-		off += bitv->hash_size * 8;
-	}
-	return off;
-}
-#endif
 
 #endif

@@ -1192,7 +1192,7 @@ static const obj_desc_t seqbank_obj_desc = {"SeqBank", sizeof(SeqBank), 5, {1, 1
 
 typedef struct {
 	u4i rid:30, dir:1, status:1;
-	u2i off, len;
+	u4i off, len;
 } seqbank_reg_t;
 define_list(seqbankregv, seqbank_reg_t);
 

@@ -126,6 +126,23 @@ typedef long double f8i;
 #define get_8bit32(bits, idx) ((((bits)[(idx) >> 2]) >> (((idx) & 0x03) << 3)) & 0xFF)
 #define get_8bit64(bits, idx) ((((bits)[(idx) >> 3]) >> (((idx) & 0x07) << 3)) & 0xFF)
 
+#define sprintfa(...) ({ char *x = alloca(snprintf(NULL, 0, __VA_ARGS__) + 1); sprintf(x, __VA_ARGS__); x; })
+
+#define BEG_RUNONCE		\
+{	\
+	static int runonce = 0;	\
+	if(runonce == 0){	\
+		runonce = 1
+
+#define END_RUNONCE		\
+	}	\
+}
+
+#define WARNONCE(str)	\
+BEG_RUNONCE;	\
+fflush(stdout); fprintf(stderr, " -- \"%s\" in %s -- %s:%d --\n", (str), __FUNCTION__, __FILE__, __LINE__); fflush(stderr);	\
+END_RUNONCE
+
 #ifndef __HEADER_NO_EXECINFO
 static inline void print_backtrace(FILE *out, int max_frame){
 	void **buffer;
