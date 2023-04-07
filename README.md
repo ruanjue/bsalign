@@ -22,6 +22,27 @@ commands:
  cat         Concatenate pieces of seqs into one seq by overlaping
 ```
 
+## Example
+```sh
+cd example
+sh run.sh
+```
+
+## Result Example
+```txt
+29.1	75	+	0	75	29.2	76	+	0	76	128	0.934	71	4	0	1
+TGTTACTTTTCTTCCCTGCTGTATAAACCC-CAGTTTTAGTCAGTCAGGGAGATGGATTTGAGACTGAGCTCCCAT
+||||||*|||||||||||||**||||||||-*||||||||||||||||||||||||||||||||||||||||||||
+TGTTACATTTCTTCCCTGCTACATAAACCCTTAGTTTTAGTCAGTCAGGGAGATGGATTTGAGACTGAGCTCCCAT
+```
+
+## Result Format
+Each result is 4 lines.
+Line 1 :col1-RefName; col2-RefLength; col3-RefStrand; col4-RefStart; col5-RefEnd; col6-QueryName; col7-QueryLength; col8-QueryStrand; col9-QueryStart; col10-QueryEnd; col11-AlignmentScore; col12-Identity; col13-NumberOfMatch; col14-NumberOfMismatch; col15-NumberOfDeletion; col16-NumberOfInsertion
+Line 2 :Reference Sequence
+Line 3 :'|', '*' and '-' mean match, mismatch and indel, respectively.
+Line 4 :Query Sequence
+
 # use bsalign library
 
 copy bsalign directory into your code `cp -r /path/to/bsalign .`
