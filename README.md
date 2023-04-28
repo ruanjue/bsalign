@@ -99,6 +99,8 @@ String *metainfo = init_string(32);
 load_binary_msa_bspoa(g, file, metainfo);
 free_bspoa(g);
 ```
+## Operating system
+The Linux platform is supported by BSAlign. It run and tested on Ubuntu 20.04.2 LTS and CentOS Linux 7.
 
 # Contact
 Jue Ruan <ruanjue@gmail.com> <br>
