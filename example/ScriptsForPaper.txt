@@ -1,0 +1,162 @@
+#this is the scripts for the paper.
+#(1) Regions for simulation
+# In the GRCh38, we selected 100 regions(at the end of this file) to align sequences.
+# Each region is split into a smaller region if needed.
+
+#(2) Simulation data:
+# Data is simulated for (1)both nanopore and pacbio, (2) size from 1000 to 100,000 bps, (3)repeat for 100 regions and (4)identity (0.80, 0,95 and 0.99)
+#nanopore
+pbsim2-master/bin/pbsim --accuracy-mean $identity  --difference-ratio 23:31:46  --hmm_model pbsim2-master/data/R103.model --length-mean {$size} --length-sd 0  --length-min {$size} --length-max {$size} --prefix {$size}/{$id:0-99}.fa.{$divergence:0.80,0.95,0.99}
+#pacbio
+pbsim2-master/bin/pbsim --accuracy-mean $identity  --hmm_model pbsim2-master/data/P6C4.model --length-mean 100 --length-sd 0  --length-min {$size} --length-max {$size} --prefix {$size}/{$id:0-99}.fa.{$divergence:0.80,0.95,0.99} 
+
+#(3) Real data is uploaded in example/real.ont.b10M.txt in GitHub page. 
+
+#(4)scripts to run each software in pairwise alignment
+#FA1 and FA2 are the files from step (2) or (3)
+#bsalign No band
+./bsalign align -R 1000 -M 2 -X 2 -O 4 -E 2 -Q 0 -P 0 -m global <(cat $FA1 $FA2) 
+#bsalign band 128,256,512,1024
+./bsalign align -R 1000 -W {band width=128,256,512,1024} -M 2 -X 2 -O 4 -E 2 -Q 0 -P 0 -m global <(cat $FA1 $FA2) 
+
+#ksw2 No Band
+./ksw2-test -t gg2_sse -R 1000 -r -A 2 -B 2 -O 4 -E 2  $FA1 $FA2
+#ksw2 band 128,256,512,1024
+./ksw2-test -w {band width=128,256,512,1024} -t gg2_sse -R 1000 -r -A 2 -B 2 -O 4 -E 2  $FA1 $FA2
+
+#ssw
+#-u is a new option when we add a loop for u(u=1000) times before the function "ssw_align()" in "main.c" in ssw source code. 
+./ssw_test -u 1000 -m 2 -x 2 -o 6 -e 2 -c $FA1 $FA2 
+
+#parasail
+parasail_aligner -d  -M 2 -X 2 -e 2 -o 6 -a sw_trace_striped_16 -f $FA1 -q $FA2 -O SSW -g $ID.NoBand.parasail
+
+#wfa
+#we modify the code in WFA2-lib/examples/wfa_basic.c to read two files and run 1000 times
+examples/bin/wfa_basic $FA1 $FA2
+
+#ba
+#ba was run in RUST. Each time we compile the file, run the script and sum the time.
+#For the accuracy, we check the final alignment score to the correct value. We modified scripts in "block-aligner/examples/nanopore_accuracy.rs" and run by "scripts/nanopore_accuracy_avx2.sh"
+cargo run --example nanopore_accuracy --release --features simd_avx2 -- "$@"
+
+#For the speed, we write a program to insert the sequence pair in the script "block-aligner/examples/accuracy.rs" and run by "block-aligner/scripts/accuracy_wasm.sh"
+CARGO_TARGET_WASM32_WASI_RUNNER="wasmtime --wasm-features simd --" cargo run --target=wasm32-wasi --example accuracy --release --features simd_wasm -- "$@"
+
+#(5)scripts to run each software in edit distance
+#bsalign edit whole mode
+./bsalign edit -R 1000 -W 0 <(cat $FA1 $FA2)
+#bsalign edit k mode (k is the known edit distance between two input sequences)
+../bsalign edit -R 1000 -W $k <(cat $FA1 $FA2)
+#myers-agrep whole mode
+./agrep $FA2 -1 $FA1 $NAME.whole.agrep 1000
+#myers-agrep k mode  (k is the known edit distance between two input sequences)
+./agrep $FA2 $k $FA1 $NAME.k.agrep 1000
+#edlib-aligner whole mode
+./edlib-aligner -r 1000  -n 0 -p -k -1 $FA1 $FA2
+#edlib-aligner k mode (k is the known edit distance between two input sequences)
+./edlib-aligner -r 1000  -n 0 -p -k $k $FA1 $FA2
+
+
+#Supplementary File 1: regions in bed format
+chr11	82350639	82450638
+chr11	112300474	112400473
+chr5	4941040	5041039
+chr7	80801430	80901429
+chr10	27246634	27346633
+chr14	25876667	25976666
+chr2	176043192	176143191
+chr15	33952916	34052915
+chr16	83292029	83392028
+chr3	65039032	65139031
+chr2	201758109	201858108
+chr7	15424866	15524865
+chr11	40618689	40718688
+chr8	23958614	24058613
+chr2	212619345	212719344
+chr1	154226764	154326763
+chr3	144501829	144601828
+chr1	74596876	74696875
+chr1	143308963	143408962
+chr1	144633375	144733374
+chr16	59316097	59416096
+chr2	190675701	190775700
+chr11	103454699	103554698
+chr1	170648854	170748853
+chr7	98088528	98188527
+chr12	103855317	103955316
+chr1	143247176	143347175
+chr2	100529954	100629953
+chr8	72105356	72205355
+chr15	32227073	32327072
+chr16	26684029	26784028
+chr6	145771149	145871148
+chr8	33198092	33298091
+chr5	118562535	118662534
+chrX	6365934	6465933
+chr2	4586889	4686888
+chr7	39785859	39885858
+chr17	58680855	58780854
+chr1	19277029	19377028
+chr1	143214164	143314163
+chr1	143215939	143315938
+chr1	143191205	143291204
+chr12	10504976	10604975
+chr12	129151172	129251171
+chr4	178215215	178315214
+chrX	83989214	84089213
+chr4	178339406	178439405
+chr7	14215445	14315444
+chr20	41796399	41896398
+chr5	80965566	81065565
+chr14	103361566	103461565
+chr10	83224256	83324255
+chr13	46035371	46135370
+chr4	163814668	163914667
+chr6	111435949	111535948
+chr4	86112942	86212941
+chr16	24936823	25036822
+chr11	25594753	25694752
+chr2	214160784	214260783
+chr4	82304989	82404988
+chr14	85900373	86000372
+chr3	81734722	81834721
+chr1	211403516	211503515
+chr4	89870920	89970919
+chr1	32038319	32138318
+chr4	106863972	106963971
+chr7	76028107	76128106
+chr2	110722130	110822129
+chr13	22465546	22565545
+chr6	100705203	100805202
+chr18	6848367	6948366
+chr20	11499012	11599011
+chr6	10321024	10421023
+chr21	19869839	19969838
+chr22	39783945	39883944
+chr13	110592458	110692457
+chr14	76144924	76244923
+chr2	114741127	114841126
+chr1	150318083	150418082
+chr6	118095680	118195679
+chr1	77597611	77697610
+chr15	73546529	73646528
+chr1	228891851	228991850
+chr1	228911286	229011285
+chr8	40250512	40350511
+chrX	127676386	127776385
+chr11	35924607	36024606
+chr1	149265805	149365804
+chr16	26692027	26792026
+chr11	122888796	122988795
+chr16	26840990	26940989
+chr7	14605152	14705151
+chrX	134023953	134123952
+chr6	111078812	111178811
+chr11	122967723	123067722
+chr12	29158207	29258206
+chr8	31139410	31239409
+chr5	130262123	130362122
+chr7	11897890	11997889
+chrX	6286482	6386481
+
